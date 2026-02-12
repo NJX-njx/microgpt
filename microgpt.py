@@ -9,6 +9,7 @@ Everything else is just efficiency.
 import os       # os.path.exists
 import math     # math.log, math.exp
 import random   # random.seed, random.choices, random.gauss, random.shuffle
+import time     # time.time
 
 # Let there be order among chaos
 random.seed(42)
@@ -21,7 +22,9 @@ if not os.path.exists('input.txt'):
 with open('input.txt') as f: # proper file handle closing
     docs = [l.strip() for l in f.read().strip().split('\n') if l.strip()]
 random.shuffle(docs)
-print(f"num docs: {len(docs)}")
+split = int(0.9 * len(docs))
+train_docs, val_docs = docs[:split], docs[split:]
+print(f"num docs: {len(docs)} (train: {len(train_docs)}, val: {len(val_docs)})")
 
 # Let there be a Tokenizer to translate strings to discrete symbols and back
 chars = ['<BOS>'] + sorted(set(''.join(docs))) # character-level tokenizer with a BOS delimiter
@@ -136,7 +139,7 @@ n_layer = 1     # number of layers
 block_size = 8  # maximum sequence length
 head_dim = n_embd // n_head # dimension of each head
 matrix = lambda nout, nin, std=0.02: [[Value(random.gauss(0, std)) for _ in range(nin)] for _ in range(nout)]
-state_dict = {'wte': matrix(vocab_size, n_embd), 'wpe': matrix(block_size, n_embd), 'lm_head': matrix(vocab_size, n_embd)}
+state_dict = {'wte': matrix(vocab_size, n_embd), 'wpe': matrix(block_size, n_embd)} # weight tying: wte doubles as lm_head
 for i in range(n_layer):
     state_dict[f'layer{i}.attn_wq'] = matrix(n_embd, n_embd)
     state_dict[f'layer{i}.attn_wk'] = matrix(n_embd, n_embd)
@@ -204,21 +207,23 @@ def gpt(token_id, pos_id, keys, values):
         x = linear(x, state_dict[f'layer{li}.mlp_fc2'])
         x = [a + b for a, b in zip(x, x_residual)]
 
-    logits = linear(x, state_dict['lm_head'])
+    logits = linear(x, state_dict['wte']) # weight tying: reuse token embeddings as output projection
     return logits
 
 # Let there be Adam, the blessed optimizer and its buffers
-learning_rate, beta1, beta2, eps_adam = 1e-2, 0.9, 0.95, 1e-8
+learning_rate, beta1, beta2, eps_adam, weight_decay = 1e-2, 0.9, 0.95, 1e-8, 1e-4
 m = [0.0] * len(params) # first moment buffer
 v = [0.0] * len(params) # second moment buffer
 b1_prod, b2_prod = 1.0, 1.0 # running product for bias correction
+max_grad_norm = 1.0 # gradient clipping threshold
 
 # Repeat in sequence
 num_steps = 500 # number of training steps
 for step in range(num_steps):
+    t0 = time.time()
 
     # Take single document, tokenize it, surround it with BOS special token on both sides
-    doc = docs[step % len(docs)]
+    doc = train_docs[step % len(train_docs)]
     tokens = [BOS] + [stoi[ch] for ch in doc] + [BOS]
     n = min(block_size, len(tokens) - 1)
 
@@ -235,30 +240,52 @@ for step in range(num_steps):
     # Backward the loss, calculating the gradients with respect to all model parameters.
     loss.backward()
 
-    # Adam optimizer update: update the model parameters based on the corresponding gradients.
-    lr_t = learning_rate * (1 - step / num_steps)
+    # Gradient clipping by global norm
+    grad_norm = sum(p.grad ** 2 for p in params) ** 0.5
+    if grad_norm > max_grad_norm:
+        for p in params: p.grad *= max_grad_norm / grad_norm
+
+    # AdamW optimizer update with cosine learning rate schedule
+    lr_t = learning_rate * 0.5 * (1 + math.cos(math.pi * step / num_steps))
     b1_prod *= beta1; b2_prod *= beta2 # running products instead of beta**step
     for i, p in enumerate(params):
         m[i] = beta1 * m[i] + (1 - beta1) * p.grad
         v[i] = beta2 * v[i] + (1 - beta2) * p.grad ** 2
         m_hat = m[i] / (1 - b1_prod) # stable bias correction
         v_hat = v[i] / (1 - b2_prod)
-        p.data -= lr_t * m_hat / (v_hat ** 0.5 + eps_adam)
+        p.data -= lr_t * (m_hat / (v_hat ** 0.5 + eps_adam) + weight_decay * p.data)
         p.grad = 0
 
-    print(f"step {step+1:4d} / {num_steps:4d} | loss {loss.data:.4f}")
+    print(f"step {step+1:4d}/{num_steps:4d} | loss {loss.data:.4f} | {(time.time()-t0)*1000:.0f}ms")
 
-# Inference: may the model babble back to us
-temperature = 0.6 # in (0, 1], control the "creativity" of generated text, low to high
+    # Periodic validation on held-out documents
+    if (step + 1) % 100 == 0:
+        val_loss, val_n = 0.0, 0
+        for vdoc in val_docs[:20]:
+            vt = [BOS] + [stoi[ch] for ch in vdoc] + [BOS]
+            vn = min(block_size, len(vt) - 1)
+            vkeys, vvals = [[] for _ in range(n_layer)], [[] for _ in range(n_layer)]
+            for vp in range(vn):
+                vlogits = gpt(vt[vp], vp, vkeys, vvals)
+                mx = max(l.data for l in vlogits) # pure-float NLL, no autograd overhead
+                val_loss -= vlogits[vt[vp+1]].data - mx - math.log(sum(math.exp(l.data - mx) for l in vlogits))
+                val_n += 1
+        print(f"  val loss: {val_loss / val_n:.4f}")
+
+# Inference: may the model babble back to us, with top-k sampling
+temperature, top_k = 0.6, 5
 print("\n--- inference ---")
 for sample_idx in range(20):
     keys, values = [[] for _ in range(n_layer)], [[] for _ in range(n_layer)]
     token_id = BOS
-    print(f"sample {sample_idx+1}: ", end="")
+    print(f"sample {sample_idx+1:2d}: ", end="")
     for pos_id in range(block_size):
         logits = gpt(token_id, pos_id, keys, values)
-        probs = softmax([l / temperature for l in logits])
-        token_id = random.choices(range(vocab_size), weights=[p.data for p in probs])[0]
+        top_ids = sorted(range(vocab_size), key=lambda i: logits[i].data, reverse=True)[:top_k]
+        top_logits = [logits[i].data / temperature for i in top_ids]
+        max_tl = max(top_logits)
+        top_probs = [math.exp(tl - max_tl) for tl in top_logits]
+        token_id = top_ids[random.choices(range(top_k), weights=top_probs)[0]]
         if token_id == BOS:
             break
         print(itos[token_id], end="")
