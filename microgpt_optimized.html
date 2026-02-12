@@ -139,7 +139,7 @@
 <body>
 
 <h1>microgpt <span style="color:#8b949e;font-size:14px;font-weight:400;">(optimized)</span></h1>
-<div class="subtitle">Original by @karpathy &mdash; Optimizations: direct __truediv__, cross_entropy, iterative backward, sum fix</div>
+<div class="subtitle">Original by @karpathy &mdash; Optimizations: weight tying, AdamW, cosine LR, grad clip, top-k sampling, train/val split</div>
 <div class="legend">
   <div class="legend-item"><div class="legend-dot new"></div> <span style="color:#3fb950;">New code</span></div>
   <div class="legend-item"><div class="legend-dot changed"></div> <span style="color:#d29922;">Changed code</span></div>
@@ -147,7 +147,7 @@
 </div>
 
 <div class="columns">
-<!-- ============ COLUMN 1 ============ -->
+<!-- ============ COLUMN 1: Lines 1-98 ============ -->
 <div class="column"><pre>
 <div class="line"><span class="ln">1</span><span class="code"><span class="string">"""</span></span></div>
 <div class="line"><span class="ln">2</span><span class="code"><span class="string">The most atomic way to train and inference a GPT in pure, dependency-free Python.</span></span></div>
@@ -160,275 +160,299 @@
 <div class="line"><span class="ln">9</span><span class="code"><span class="keyword">import</span> os       <span class="comment"># os.path.exists</span></span></div>
 <div class="line"><span class="ln">10</span><span class="code"><span class="keyword">import</span> math     <span class="comment"># math.log, math.exp</span></span></div>
 <div class="line"><span class="ln">11</span><span class="code"><span class="keyword">import</span> random   <span class="comment"># random.seed, random.choices, random.gauss, random.shuffle</span></span></div>
-<div class="line"><span class="ln">12</span><span class="code"></span></div>
-<div class="line"><span class="ln">13</span><span class="code"><span class="comment"># Let there be order among chaos</span></span></div>
-<div class="line"><span class="ln">14</span><span class="code">random.seed(<span class="number">42</span>)</span></div>
-<div class="line"><span class="ln">15</span><span class="code"></span></div>
-<div class="line"><span class="ln">16</span><span class="code"><span class="comment"># Let there be an input dataset `docs`: list[str] of documents (e.g. a dataset of names)</span></span></div>
-<div class="line"><span class="ln">17</span><span class="code"><span class="keyword">if not</span> os.path.exists(<span class="string">'input.txt'</span>):</span></div>
-<div class="line"><span class="ln">18</span><span class="code">    <span class="keyword">import</span> urllib.request</span></div>
-<div class="line"><span class="ln">19</span><span class="code">    names_url = <span class="string">'https://raw.githubusercontent.com/karpathy/makemore/refs/heads/master/names.txt'</span></span></div>
-<div class="line"><span class="ln">20</span><span class="code">    urllib.request.urlretrieve(names_url, <span class="string">'input.txt'</span>)</span></div>
-<div class="line line-changed"><span class="ln">21</span><span class="code"><span class="keyword">with</span> <span class="builtin">open</span>(<span class="string">'input.txt'</span>) <span class="keyword">as</span> f: <span class="comment"># proper file handle closing</span><span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line line-changed"><span class="ln">22</span><span class="code">    docs = [l.strip() <span class="keyword">for</span> l <span class="keyword">in</span> f.read().strip().split(<span class="string">'\n'</span>) <span class="keyword">if</span> l.strip()]</span></div>
-<div class="line"><span class="ln">23</span><span class="code">random.shuffle(docs)</span></div>
-<div class="line"><span class="ln">24</span><span class="code"><span class="builtin">print</span>(<span class="string">f"num docs: {<span class="builtin">len</span>(docs)}"</span>)</span></div>
-<div class="line"><span class="ln">25</span><span class="code"></span></div>
-<div class="line"><span class="ln">26</span><span class="code"><span class="comment"># Let there be a Tokenizer to translate strings to discrete symbols and back</span></span></div>
-<div class="line"><span class="ln">27</span><span class="code">chars = [<span class="string">'&lt;BOS&gt;'</span>] + <span class="builtin">sorted</span>(<span class="builtin">set</span>(<span class="string">''</span>.join(docs))) <span class="comment"># character-level tokenizer with a BOS delimiter</span></span></div>
-<div class="line"><span class="ln">28</span><span class="code">vocab_size = <span class="builtin">len</span>(chars)</span></div>
-<div class="line"><span class="ln">29</span><span class="code">stoi = { ch:i <span class="keyword">for</span> i, ch <span class="keyword">in</span> <span class="builtin">enumerate</span>(chars) } <span class="comment"># encoding: map string to integer</span></span></div>
-<div class="line"><span class="ln">30</span><span class="code">itos = { i:ch <span class="keyword">for</span> i, ch <span class="keyword">in</span> <span class="builtin">enumerate</span>(chars) } <span class="comment"># decoding: map integer to string</span></span></div>
-<div class="line"><span class="ln">31</span><span class="code">BOS = stoi[<span class="string">'&lt;BOS&gt;'</span>]</span></div>
-<div class="line"><span class="ln">32</span><span class="code"><span class="builtin">print</span>(<span class="string">f"vocab size: {vocab_size}"</span>)</span></div>
-<div class="line"><span class="ln">33</span><span class="code"></span></div>
-<div class="line"><span class="ln">34</span><span class="code"><span class="comment"># Let there be an Autograd to apply the chain rule recursively across a computation graph and so</span></span></div>
-<div class="line"><span class="ln">35</span><span class="code"><span class="comment"># calculate the gradients of the loss with respect to model parameters.</span></span></div>
-<div class="line"><span class="ln">36</span><span class="code"><span class="keyword">class</span> <span class="cls">Value</span>:</span></div>
-<div class="line"><span class="ln">37</span><span class="code">    <span class="string">"""Stores a single scalar value and its gradient."""</span></span></div>
-<div class="line"><span class="ln">38</span><span class="code"></span></div>
-<div class="line"><span class="ln">39</span><span class="code">    <span class="keyword">def</span> <span class="func">__init__</span>(<span class="self">self</span>, data, _children=(), _op=<span class="string">''</span>):</span></div>
-<div class="line"><span class="ln">40</span><span class="code">        <span class="self">self</span>.data = data</span></div>
-<div class="line"><span class="ln">41</span><span class="code">        <span class="self">self</span>.grad = <span class="number">0</span></span></div>
-<div class="line"><span class="ln">42</span><span class="code">        <span class="self">self</span>._backward = <span class="keyword">lambda</span>: <span class="keyword">None</span></span></div>
-<div class="line"><span class="ln">43</span><span class="code">        <span class="self">self</span>._prev = <span class="builtin">set</span>(_children)</span></div>
-<div class="line"><span class="ln">44</span><span class="code">        <span class="self">self</span>._op = _op <span class="comment"># the op that produced this node, for graphviz / debugging / etc</span></span></div>
-<div class="line"><span class="ln">45</span><span class="code"></span></div>
-<div class="line"><span class="ln">46</span><span class="code">    <span class="keyword">def</span> <span class="func">__add__</span>(<span class="self">self</span>, other):</span></div>
-<div class="line"><span class="ln">47</span><span class="code">        other = other <span class="keyword">if</span> <span class="builtin">isinstance</span>(other, <span class="cls">Value</span>) <span class="keyword">else</span> <span class="cls">Value</span>(other)</span></div>
-<div class="line"><span class="ln">48</span><span class="code">        out = <span class="cls">Value</span>(<span class="self">self</span>.data + other.data, (<span class="self">self</span>, other), <span class="string">'+'</span>)</span></div>
-<div class="line"><span class="ln">49</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
-<div class="line"><span class="ln">50</span><span class="code">            <span class="self">self</span>.grad += out.grad</span></div>
-<div class="line"><span class="ln">51</span><span class="code">            other.grad += out.grad</span></div>
-<div class="line"><span class="ln">52</span><span class="code">        out._backward = _backward</span></div>
-<div class="line"><span class="ln">53</span><span class="code">        <span class="keyword">return</span> out</span></div>
-<div class="line"><span class="ln">54</span><span class="code"></span></div>
-<div class="line"><span class="ln">55</span><span class="code">    <span class="keyword">def</span> <span class="func">__mul__</span>(<span class="self">self</span>, other):</span></div>
-<div class="line"><span class="ln">56</span><span class="code">        other = other <span class="keyword">if</span> <span class="builtin">isinstance</span>(other, <span class="cls">Value</span>) <span class="keyword">else</span> <span class="cls">Value</span>(other)</span></div>
-<div class="line"><span class="ln">57</span><span class="code">        out = <span class="cls">Value</span>(<span class="self">self</span>.data * other.data, (<span class="self">self</span>, other), <span class="string">'*'</span>)</span></div>
-<div class="line"><span class="ln">58</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
-<div class="line"><span class="ln">59</span><span class="code">            <span class="self">self</span>.grad += other.data * out.grad</span></div>
-<div class="line"><span class="ln">60</span><span class="code">            other.grad += <span class="self">self</span>.data * out.grad</span></div>
-<div class="line"><span class="ln">61</span><span class="code">        out._backward = _backward</span></div>
-<div class="line"><span class="ln">62</span><span class="code">        <span class="keyword">return</span> out</span></div>
-<div class="line"><span class="ln">63</span><span class="code"></span></div>
-<div class="line"><span class="ln">64</span><span class="code">    <span class="keyword">def</span> <span class="func">__pow__</span>(<span class="self">self</span>, other):</span></div>
-<div class="line"><span class="ln">65</span><span class="code">        <span class="keyword">assert</span> <span class="builtin">isinstance</span>(other, (<span class="builtin">int</span>, <span class="builtin">float</span>)), <span class="string">"only supporting int/float powers for now"</span></span></div>
-<div class="line"><span class="ln">66</span><span class="code">        out = <span class="cls">Value</span>(<span class="self">self</span>.data**other, (<span class="self">self</span>,), <span class="string">f'**{other}'</span>)</span></div>
-<div class="line"><span class="ln">67</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
-<div class="line"><span class="ln">68</span><span class="code">            <span class="self">self</span>.grad += (other * <span class="self">self</span>.data**(other-<span class="number">1</span>)) * out.grad</span></div>
-<div class="line"><span class="ln">69</span><span class="code">        out._backward = _backward</span></div>
-<div class="line"><span class="ln">70</span><span class="code">        <span class="keyword">return</span> out</span></div>
-<div class="line"><span class="ln">71</span><span class="code"></span></div>
-<div class="line line-new"><span class="ln">72</span><span class="code">    <span class="keyword">def</span> <span class="func">__truediv__</span>(<span class="self">self</span>, other): <span class="comment"># direct div: fewer graph nodes</span><span class="opt-tag opt-new">NEW</span></span></div>
-<div class="line line-new"><span class="ln">73</span><span class="code">        other = other <span class="keyword">if</span> <span class="builtin">isinstance</span>(other, <span class="cls">Value</span>) <span class="keyword">else</span> <span class="cls">Value</span>(other)</span></div>
-<div class="line line-new"><span class="ln">74</span><span class="code">        out = <span class="cls">Value</span>(<span class="self">self</span>.data / other.data, (<span class="self">self</span>, other), <span class="string">'/'</span>)</span></div>
-<div class="line line-new"><span class="ln">75</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
-<div class="line line-new"><span class="ln">76</span><span class="code">            <span class="self">self</span>.grad += (<span class="number">1.0</span> / other.data) * out.grad</span></div>
-<div class="line line-new"><span class="ln">77</span><span class="code">            other.grad += (-<span class="self">self</span>.data / (other.data ** <span class="number">2</span>)) * out.grad</span></div>
-<div class="line line-new"><span class="ln">78</span><span class="code">        out._backward = _backward</span></div>
-<div class="line line-new"><span class="ln">79</span><span class="code">        <span class="keyword">return</span> out</span></div>
-<div class="line"><span class="ln">80</span><span class="code"></span></div>
-<div class="line"><span class="ln">81</span><span class="code">    <span class="keyword">def</span> <span class="func">log</span>(<span class="self">self</span>):</span></div>
-<div class="line"><span class="ln">82</span><span class="code">        out = <span class="cls">Value</span>(math.log(<span class="self">self</span>.data), (<span class="self">self</span>,), <span class="string">'log'</span>)</span></div>
-<div class="line"><span class="ln">83</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
-<div class="line"><span class="ln">84</span><span class="code">            <span class="self">self</span>.grad += (<span class="number">1</span> / <span class="self">self</span>.data) * out.grad</span></div>
-<div class="line"><span class="ln">85</span><span class="code">        out._backward = _backward</span></div>
-<div class="line"><span class="ln">86</span><span class="code">        <span class="keyword">return</span> out</span></div>
-<div class="line"><span class="ln">87</span><span class="code"></span></div>
-<div class="line"><span class="ln">88</span><span class="code">    <span class="keyword">def</span> <span class="func">exp</span>(<span class="self">self</span>):</span></div>
-<div class="line"><span class="ln">89</span><span class="code">        out = <span class="cls">Value</span>(math.exp(<span class="self">self</span>.data), (<span class="self">self</span>,), <span class="string">'exp'</span>)</span></div>
-<div class="line"><span class="ln">90</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
-<div class="line"><span class="ln">91</span><span class="code">            <span class="self">self</span>.grad += out.data * out.grad</span></div>
+<div class="line line-new"><span class="ln">12</span><span class="code"><span class="keyword">import</span> time     <span class="comment"># time.time</span><span class="opt-tag opt-new">NEW</span></span></div>
+<div class="line"><span class="ln">13</span><span class="code"></span></div>
+<div class="line"><span class="ln">14</span><span class="code"><span class="comment"># Let there be order among chaos</span></span></div>
+<div class="line"><span class="ln">15</span><span class="code">random.seed(<span class="number">42</span>)</span></div>
+<div class="line"><span class="ln">16</span><span class="code"></span></div>
+<div class="line"><span class="ln">17</span><span class="code"><span class="comment"># Let there be an input dataset `docs`: list[str] of documents (e.g. a dataset of names)</span></span></div>
+<div class="line"><span class="ln">18</span><span class="code"><span class="keyword">if not</span> os.path.exists(<span class="string">'input.txt'</span>):</span></div>
+<div class="line"><span class="ln">19</span><span class="code">    <span class="keyword">import</span> urllib.request</span></div>
+<div class="line"><span class="ln">20</span><span class="code">    names_url = <span class="string">'https://raw.githubusercontent.com/karpathy/makemore/refs/heads/master/names.txt'</span></span></div>
+<div class="line"><span class="ln">21</span><span class="code">    urllib.request.urlretrieve(names_url, <span class="string">'input.txt'</span>)</span></div>
+<div class="line line-changed"><span class="ln">22</span><span class="code"><span class="keyword">with</span> <span class="builtin">open</span>(<span class="string">'input.txt'</span>) <span class="keyword">as</span> f: <span class="comment"># proper file handle closing</span><span class="opt-tag opt-changed">OPT</span></span></div>
+<div class="line line-changed"><span class="ln">23</span><span class="code">    docs = [l.strip() <span class="keyword">for</span> l <span class="keyword">in</span> f.read().strip().split(<span class="string">'\n'</span>) <span class="keyword">if</span> l.strip()]</span></div>
+<div class="line"><span class="ln">24</span><span class="code">random.shuffle(docs)</span></div>
+<div class="line line-new"><span class="ln">25</span><span class="code">split = <span class="builtin">int</span>(<span class="number">0.9</span> * <span class="builtin">len</span>(docs))<span class="opt-tag opt-new">NEW</span></span></div>
+<div class="line line-new"><span class="ln">26</span><span class="code">train_docs, val_docs = docs[:split], docs[split:]</span></div>
+<div class="line line-changed"><span class="ln">27</span><span class="code"><span class="builtin">print</span>(<span class="string">f"num docs: {<span class="builtin">len</span>(docs)} (train: {<span class="builtin">len</span>(train_docs)}, val: {<span class="builtin">len</span>(val_docs)})"</span>)<span class="opt-tag opt-changed">OPT</span></span></div>
+<div class="line"><span class="ln">28</span><span class="code"></span></div>
+<div class="line"><span class="ln">29</span><span class="code"><span class="comment"># Let there be a Tokenizer to translate strings to discrete symbols and back</span></span></div>
+<div class="line"><span class="ln">30</span><span class="code">chars = [<span class="string">'&lt;BOS&gt;'</span>] + <span class="builtin">sorted</span>(<span class="builtin">set</span>(<span class="string">''</span>.join(docs))) <span class="comment"># character-level tokenizer with a BOS delimiter</span></span></div>
+<div class="line"><span class="ln">31</span><span class="code">vocab_size = <span class="builtin">len</span>(chars)</span></div>
+<div class="line"><span class="ln">32</span><span class="code">stoi = { ch:i <span class="keyword">for</span> i, ch <span class="keyword">in</span> <span class="builtin">enumerate</span>(chars) } <span class="comment"># encoding: map string to integer</span></span></div>
+<div class="line"><span class="ln">33</span><span class="code">itos = { i:ch <span class="keyword">for</span> i, ch <span class="keyword">in</span> <span class="builtin">enumerate</span>(chars) } <span class="comment"># decoding: map integer to string</span></span></div>
+<div class="line"><span class="ln">34</span><span class="code">BOS = stoi[<span class="string">'&lt;BOS&gt;'</span>]</span></div>
+<div class="line"><span class="ln">35</span><span class="code"><span class="builtin">print</span>(<span class="string">f"vocab size: {vocab_size}"</span>)</span></div>
+<div class="line"><span class="ln">36</span><span class="code"></span></div>
+<div class="line"><span class="ln">37</span><span class="code"><span class="comment"># Let there be an Autograd to apply the chain rule recursively across a computation graph and so</span></span></div>
+<div class="line"><span class="ln">38</span><span class="code"><span class="comment"># calculate the gradients of the loss with respect to model parameters.</span></span></div>
+<div class="line"><span class="ln">39</span><span class="code"><span class="keyword">class</span> <span class="cls">Value</span>:</span></div>
+<div class="line"><span class="ln">40</span><span class="code">    <span class="string">"""Stores a single scalar value and its gradient."""</span></span></div>
+<div class="line"><span class="ln">41</span><span class="code"></span></div>
+<div class="line"><span class="ln">42</span><span class="code">    <span class="keyword">def</span> <span class="func">__init__</span>(<span class="self">self</span>, data, _children=(), _op=<span class="string">''</span>):</span></div>
+<div class="line"><span class="ln">43</span><span class="code">        <span class="self">self</span>.data = data</span></div>
+<div class="line"><span class="ln">44</span><span class="code">        <span class="self">self</span>.grad = <span class="number">0</span></span></div>
+<div class="line"><span class="ln">45</span><span class="code">        <span class="self">self</span>._backward = <span class="keyword">lambda</span>: <span class="keyword">None</span></span></div>
+<div class="line"><span class="ln">46</span><span class="code">        <span class="self">self</span>._prev = <span class="builtin">set</span>(_children)</span></div>
+<div class="line"><span class="ln">47</span><span class="code">        <span class="self">self</span>._op = _op <span class="comment"># the op that produced this node, for graphviz / debugging / etc</span></span></div>
+<div class="line"><span class="ln">48</span><span class="code"></span></div>
+<div class="line"><span class="ln">49</span><span class="code">    <span class="keyword">def</span> <span class="func">__add__</span>(<span class="self">self</span>, other):</span></div>
+<div class="line"><span class="ln">50</span><span class="code">        other = other <span class="keyword">if</span> <span class="builtin">isinstance</span>(other, <span class="cls">Value</span>) <span class="keyword">else</span> <span class="cls">Value</span>(other)</span></div>
+<div class="line"><span class="ln">51</span><span class="code">        out = <span class="cls">Value</span>(<span class="self">self</span>.data + other.data, (<span class="self">self</span>, other), <span class="string">'+'</span>)</span></div>
+<div class="line"><span class="ln">52</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
+<div class="line"><span class="ln">53</span><span class="code">            <span class="self">self</span>.grad += out.grad</span></div>
+<div class="line"><span class="ln">54</span><span class="code">            other.grad += out.grad</span></div>
+<div class="line"><span class="ln">55</span><span class="code">        out._backward = _backward</span></div>
+<div class="line"><span class="ln">56</span><span class="code">        <span class="keyword">return</span> out</span></div>
+<div class="line"><span class="ln">57</span><span class="code"></span></div>
+<div class="line"><span class="ln">58</span><span class="code">    <span class="keyword">def</span> <span class="func">__mul__</span>(<span class="self">self</span>, other):</span></div>
+<div class="line"><span class="ln">59</span><span class="code">        other = other <span class="keyword">if</span> <span class="builtin">isinstance</span>(other, <span class="cls">Value</span>) <span class="keyword">else</span> <span class="cls">Value</span>(other)</span></div>
+<div class="line"><span class="ln">60</span><span class="code">        out = <span class="cls">Value</span>(<span class="self">self</span>.data * other.data, (<span class="self">self</span>, other), <span class="string">'*'</span>)</span></div>
+<div class="line"><span class="ln">61</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
+<div class="line"><span class="ln">62</span><span class="code">            <span class="self">self</span>.grad += other.data * out.grad</span></div>
+<div class="line"><span class="ln">63</span><span class="code">            other.grad += <span class="self">self</span>.data * out.grad</span></div>
+<div class="line"><span class="ln">64</span><span class="code">        out._backward = _backward</span></div>
+<div class="line"><span class="ln">65</span><span class="code">        <span class="keyword">return</span> out</span></div>
+<div class="line"><span class="ln">66</span><span class="code"></span></div>
+<div class="line"><span class="ln">67</span><span class="code">    <span class="keyword">def</span> <span class="func">__pow__</span>(<span class="self">self</span>, other):</span></div>
+<div class="line"><span class="ln">68</span><span class="code">        <span class="keyword">assert</span> <span class="builtin">isinstance</span>(other, (<span class="builtin">int</span>, <span class="builtin">float</span>)), <span class="string">"only supporting int/float powers for now"</span></span></div>
+<div class="line"><span class="ln">69</span><span class="code">        out = <span class="cls">Value</span>(<span class="self">self</span>.data**other, (<span class="self">self</span>,), <span class="string">f'**{other}'</span>)</span></div>
+<div class="line"><span class="ln">70</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
+<div class="line"><span class="ln">71</span><span class="code">            <span class="self">self</span>.grad += (other * <span class="self">self</span>.data**(other-<span class="number">1</span>)) * out.grad</span></div>
+<div class="line"><span class="ln">72</span><span class="code">        out._backward = _backward</span></div>
+<div class="line"><span class="ln">73</span><span class="code">        <span class="keyword">return</span> out</span></div>
+<div class="line"><span class="ln">74</span><span class="code"></span></div>
+<div class="line line-new"><span class="ln">75</span><span class="code">    <span class="keyword">def</span> <span class="func">__truediv__</span>(<span class="self">self</span>, other): <span class="comment"># direct div: fewer graph nodes than self * other**-1</span><span class="opt-tag opt-new">NEW</span></span></div>
+<div class="line line-new"><span class="ln">76</span><span class="code">        other = other <span class="keyword">if</span> <span class="builtin">isinstance</span>(other, <span class="cls">Value</span>) <span class="keyword">else</span> <span class="cls">Value</span>(other)</span></div>
+<div class="line line-new"><span class="ln">77</span><span class="code">        out = <span class="cls">Value</span>(<span class="self">self</span>.data / other.data, (<span class="self">self</span>, other), <span class="string">'/'</span>)</span></div>
+<div class="line line-new"><span class="ln">78</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
+<div class="line line-new"><span class="ln">79</span><span class="code">            <span class="self">self</span>.grad += (<span class="number">1.0</span> / other.data) * out.grad</span></div>
+<div class="line line-new"><span class="ln">80</span><span class="code">            other.grad += (-<span class="self">self</span>.data / (other.data ** <span class="number">2</span>)) * out.grad</span></div>
+<div class="line line-new"><span class="ln">81</span><span class="code">        out._backward = _backward</span></div>
+<div class="line line-new"><span class="ln">82</span><span class="code">        <span class="keyword">return</span> out</span></div>
+<div class="line"><span class="ln">83</span><span class="code"></span></div>
+<div class="line"><span class="ln">84</span><span class="code">    <span class="keyword">def</span> <span class="func">log</span>(<span class="self">self</span>):</span></div>
+<div class="line"><span class="ln">85</span><span class="code">        out = <span class="cls">Value</span>(math.log(<span class="self">self</span>.data), (<span class="self">self</span>,), <span class="string">'log'</span>)</span></div>
+<div class="line"><span class="ln">86</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
+<div class="line"><span class="ln">87</span><span class="code">            <span class="self">self</span>.grad += (<span class="number">1</span> / <span class="self">self</span>.data) * out.grad</span></div>
+<div class="line"><span class="ln">88</span><span class="code">        out._backward = _backward</span></div>
+<div class="line"><span class="ln">89</span><span class="code">        <span class="keyword">return</span> out</span></div>
+<div class="line"><span class="ln">90</span><span class="code"></span></div>
+<div class="line"><span class="ln">91</span><span class="code">    <span class="keyword">def</span> <span class="func">exp</span>(<span class="self">self</span>):</span></div>
+<div class="line"><span class="ln">92</span><span class="code">        out = <span class="cls">Value</span>(math.exp(<span class="self">self</span>.data), (<span class="self">self</span>,), <span class="string">'exp'</span>)</span></div>
+<div class="line"><span class="ln">93</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
+<div class="line"><span class="ln">94</span><span class="code">            <span class="self">self</span>.grad += out.data * out.grad</span></div>
+<div class="line"><span class="ln">95</span><span class="code">        out._backward = _backward</span></div>
+<div class="line"><span class="ln">96</span><span class="code">        <span class="keyword">return</span> out</span></div>
+<div class="line"><span class="ln">97</span><span class="code"></span></div>
+<div class="line"><span class="ln">98</span><span class="code">    <span class="keyword">def</span> <span class="func">relu</span>(<span class="self">self</span>):</span></div>
 </pre></div>
-
-<!-- ============ COLUMN 2 ============ -->
+<!-- ============ COLUMN 2: Lines 99-196 ============ -->
 <div class="column"><pre>
-<div class="line"><span class="ln">92</span><span class="code">        out._backward = _backward</span></div>
-<div class="line"><span class="ln">93</span><span class="code">        <span class="keyword">return</span> out</span></div>
-<div class="line"><span class="ln">94</span><span class="code"></span></div>
-<div class="line"><span class="ln">95</span><span class="code">    <span class="keyword">def</span> <span class="func">relu</span>(<span class="self">self</span>):</span></div>
-<div class="line"><span class="ln">96</span><span class="code">        out = <span class="cls">Value</span>(<span class="number">0</span> <span class="keyword">if</span> <span class="self">self</span>.data &lt; <span class="number">0</span> <span class="keyword">else</span> <span class="self">self</span>.data, (<span class="self">self</span>,), <span class="string">'ReLU'</span>)</span></div>
-<div class="line"><span class="ln">97</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
-<div class="line"><span class="ln">98</span><span class="code">            <span class="self">self</span>.grad += (out.data &gt; <span class="number">0</span>) * out.grad</span></div>
-<div class="line"><span class="ln">99</span><span class="code">        out._backward = _backward</span></div>
-<div class="line"><span class="ln">100</span><span class="code">        <span class="keyword">return</span> out</span></div>
-<div class="line"><span class="ln">101</span><span class="code"></span></div>
-<div class="line line-changed"><span class="ln">102</span><span class="code">    <span class="keyword">def</span> <span class="func">backward</span>(<span class="self">self</span>): <span class="comment"># iterative topological sort (no recursion limit)</span><span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line line-changed"><span class="ln">103</span><span class="code">        topo = []</span></div>
-<div class="line line-changed"><span class="ln">104</span><span class="code">        visited = <span class="builtin">set</span>()</span></div>
-<div class="line line-changed"><span class="ln">105</span><span class="code">        stack = [(<span class="self">self</span>, <span class="keyword">False</span>)]</span></div>
-<div class="line line-changed"><span class="ln">106</span><span class="code">        <span class="keyword">while</span> stack:</span></div>
-<div class="line line-changed"><span class="ln">107</span><span class="code">            node, processed = stack.pop()</span></div>
-<div class="line line-changed"><span class="ln">108</span><span class="code">            <span class="keyword">if</span> processed:</span></div>
-<div class="line line-changed"><span class="ln">109</span><span class="code">                topo.append(node)</span></div>
-<div class="line line-changed"><span class="ln">110</span><span class="code">                <span class="keyword">continue</span></span></div>
-<div class="line line-changed"><span class="ln">111</span><span class="code">            <span class="keyword">if</span> node <span class="keyword">in</span> visited:</span></div>
-<div class="line line-changed"><span class="ln">112</span><span class="code">                <span class="keyword">continue</span></span></div>
-<div class="line line-changed"><span class="ln">113</span><span class="code">            visited.add(node)</span></div>
-<div class="line line-changed"><span class="ln">114</span><span class="code">            stack.append((node, <span class="keyword">True</span>))</span></div>
-<div class="line line-changed"><span class="ln">115</span><span class="code">            <span class="keyword">for</span> child <span class="keyword">in</span> node._prev:</span></div>
-<div class="line line-changed"><span class="ln">116</span><span class="code">                <span class="keyword">if</span> child <span class="keyword">not in</span> visited:</span></div>
-<div class="line line-changed"><span class="ln">117</span><span class="code">                    stack.append((child, <span class="keyword">False</span>))</span></div>
-<div class="line"><span class="ln">118</span><span class="code">        <span class="self">self</span>.grad = <span class="number">1</span></span></div>
-<div class="line"><span class="ln">119</span><span class="code">        <span class="keyword">for</span> v <span class="keyword">in</span> <span class="builtin">reversed</span>(topo):</span></div>
-<div class="line"><span class="ln">120</span><span class="code">            v._backward()</span></div>
-<div class="line"><span class="ln">121</span><span class="code"></span></div>
-<div class="line"><span class="ln">122</span><span class="code">    <span class="keyword">def</span> <span class="func">__neg__</span>(<span class="self">self</span>): <span class="keyword">return</span> <span class="self">self</span> * -<span class="number">1</span></span></div>
-<div class="line"><span class="ln">123</span><span class="code">    <span class="keyword">def</span> <span class="func">__radd__</span>(<span class="self">self</span>, other): <span class="keyword">return</span> <span class="self">self</span> + other</span></div>
-<div class="line"><span class="ln">124</span><span class="code">    <span class="keyword">def</span> <span class="func">__sub__</span>(<span class="self">self</span>, other): <span class="keyword">return</span> <span class="self">self</span> + (-other)</span></div>
-<div class="line"><span class="ln">125</span><span class="code">    <span class="keyword">def</span> <span class="func">__rsub__</span>(<span class="self">self</span>, other): <span class="keyword">return</span> other + (-<span class="self">self</span>)</span></div>
-<div class="line"><span class="ln">126</span><span class="code">    <span class="keyword">def</span> <span class="func">__rmul__</span>(<span class="self">self</span>, other): <span class="keyword">return</span> <span class="self">self</span> * other</span></div>
-<div class="line line-changed"><span class="ln">127</span><span class="code">    <span class="keyword">def</span> <span class="func">__rtruediv__</span>(<span class="self">self</span>, other): <span class="comment"># uses direct __truediv__ now</span><span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line line-changed"><span class="ln">128</span><span class="code">        other = other <span class="keyword">if</span> <span class="builtin">isinstance</span>(other, <span class="cls">Value</span>) <span class="keyword">else</span> <span class="cls">Value</span>(other)</span></div>
-<div class="line line-changed"><span class="ln">129</span><span class="code">        <span class="keyword">return</span> other / <span class="self">self</span></span></div>
-<div class="line"><span class="ln">130</span><span class="code">    <span class="keyword">def</span> <span class="func">__repr__</span>(<span class="self">self</span>): <span class="keyword">return</span> <span class="string">f"Value(data={<span class="self">self</span>.data}, grad={<span class="self">self</span>.grad})"</span></span></div>
-<div class="line"><span class="ln">131</span><span class="code"></span></div>
-<div class="line"><span class="ln">132</span><span class="code"><span class="comment"># Initialize the parameters, to store the knowledge of the model.</span></span></div>
-<div class="line"><span class="ln">133</span><span class="code">n_embd = <span class="number">16</span>     <span class="comment"># embedding dimension</span></span></div>
-<div class="line"><span class="ln">134</span><span class="code">n_head = <span class="number">4</span>      <span class="comment"># number of attention heads</span></span></div>
-<div class="line"><span class="ln">135</span><span class="code">n_layer = <span class="number">1</span>     <span class="comment"># number of layers</span></span></div>
-<div class="line"><span class="ln">136</span><span class="code">block_size = <span class="number">8</span>  <span class="comment"># maximum sequence length</span></span></div>
-<div class="line"><span class="ln">137</span><span class="code">head_dim = n_embd // n_head <span class="comment"># dimension of each head</span></span></div>
-<div class="line"><span class="ln">138</span><span class="code">matrix = <span class="keyword">lambda</span> nout, nin, std=<span class="number">0.02</span>: [[<span class="cls">Value</span>(random.gauss(<span class="number">0</span>, std)) <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(nin)] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(nout)]</span></div>
-<div class="line"><span class="ln">139</span><span class="code">state_dict = {<span class="string">'wte'</span>: matrix(vocab_size, n_embd), <span class="string">'wpe'</span>: matrix(block_size, n_embd), <span class="string">'lm_head'</span>: matrix(vocab_size, n_embd)}</span></div>
-<div class="line"><span class="ln">140</span><span class="code"><span class="keyword">for</span> i <span class="keyword">in</span> <span class="builtin">range</span>(n_layer):</span></div>
-<div class="line"><span class="ln">141</span><span class="code">    state_dict[<span class="string">f'layer{i}.attn_wq'</span>] = matrix(n_embd, n_embd)</span></div>
-<div class="line"><span class="ln">142</span><span class="code">    state_dict[<span class="string">f'layer{i}.attn_wk'</span>] = matrix(n_embd, n_embd)</span></div>
-<div class="line"><span class="ln">143</span><span class="code">    state_dict[<span class="string">f'layer{i}.attn_wv'</span>] = matrix(n_embd, n_embd)</span></div>
-<div class="line"><span class="ln">144</span><span class="code">    state_dict[<span class="string">f'layer{i}.attn_wo'</span>] = matrix(n_embd, n_embd, std=<span class="number">0</span>)</span></div>
-<div class="line"><span class="ln">145</span><span class="code">    state_dict[<span class="string">f'layer{i}.mlp_fc1'</span>] = matrix(<span class="number">4</span> * n_embd, n_embd)</span></div>
-<div class="line"><span class="ln">146</span><span class="code">    state_dict[<span class="string">f'layer{i}.mlp_fc2'</span>] = matrix(n_embd, <span class="number">4</span> * n_embd, std=<span class="number">0</span>)</span></div>
-<div class="line"><span class="ln">147</span><span class="code">params = [p <span class="keyword">for</span> mat <span class="keyword">in</span> state_dict.values() <span class="keyword">for</span> row <span class="keyword">in</span> mat <span class="keyword">for</span> p <span class="keyword">in</span> row] <span class="comment"># flatten params into a single list[Value]</span></span></div>
-<div class="line"><span class="ln">148</span><span class="code"><span class="builtin">print</span>(<span class="string">f"num params: {<span class="builtin">len</span>(params)}"</span>)</span></div>
-<div class="line"><span class="ln">149</span><span class="code"></span></div>
-<div class="line"><span class="ln">150</span><span class="code"><span class="comment"># Define the model architecture: a stateless function mapping token sequence and parameters to logits over what comes next.</span></span></div>
-<div class="line"><span class="ln">151</span><span class="code"><span class="comment"># Follow GPT-2, blessed among the GPTs, with minor differences: layernorm -&gt; rmsnorm, no biases, GeLU -&gt; ReLU^2</span></span></div>
-<div class="line"><span class="ln">152</span><span class="code"><span class="keyword">def</span> <span class="func">linear</span>(x, w):</span></div>
-<div class="line"><span class="ln">153</span><span class="code">    <span class="keyword">return</span> [<span class="builtin">sum</span>(wi * xi <span class="keyword">for</span> wi, xi <span class="keyword">in</span> <span class="builtin">zip</span>(wo, x)) <span class="keyword">for</span> wo <span class="keyword">in</span> w]</span></div>
-<div class="line"><span class="ln">154</span><span class="code"></span></div>
-<div class="line"><span class="ln">155</span><span class="code"><span class="keyword">def</span> <span class="func">softmax</span>(logits):</span></div>
-<div class="line"><span class="ln">156</span><span class="code">    max_val = <span class="builtin">max</span>(val.data <span class="keyword">for</span> val <span class="keyword">in</span> logits)</span></div>
-<div class="line"><span class="ln">157</span><span class="code">    exps = [(val - max_val).exp() <span class="keyword">for</span> val <span class="keyword">in</span> logits]</span></div>
-<div class="line"><span class="ln">158</span><span class="code">    total = <span class="builtin">sum</span>(exps)</span></div>
-<div class="line"><span class="ln">159</span><span class="code">    <span class="keyword">return</span> [e / total <span class="keyword">for</span> e <span class="keyword">in</span> exps]</span></div>
-<div class="line"><span class="ln">160</span><span class="code"></span></div>
-<div class="line"><span class="ln">161</span><span class="code"><span class="keyword">def</span> <span class="func">rmsnorm</span>(x):</span></div>
-<div class="line"><span class="ln">162</span><span class="code">    ms = <span class="builtin">sum</span>(xi * xi <span class="keyword">for</span> xi <span class="keyword">in</span> x) / <span class="builtin">len</span>(x)</span></div>
-<div class="line"><span class="ln">163</span><span class="code">    scale = (ms + <span class="number">1e-5</span>) ** -<span class="number">0.5</span></span></div>
-<div class="line"><span class="ln">164</span><span class="code">    <span class="keyword">return</span> [xi * scale <span class="keyword">for</span> xi <span class="keyword">in</span> x]</span></div>
-<div class="line"><span class="ln">165</span><span class="code"></span></div>
-<div class="line line-new"><span class="ln">166</span><span class="code"><span class="keyword">def</span> <span class="func">cross_entropy</span>(logits, target_id): <span class="comment"># fused log-softmax + nll: fewer nodes, numerically stable</span><span class="opt-tag opt-new">NEW</span></span></div>
-<div class="line line-new"><span class="ln">167</span><span class="code">    max_val = <span class="builtin">max</span>(val.data <span class="keyword">for</span> val <span class="keyword">in</span> logits)</span></div>
-<div class="line line-new"><span class="ln">168</span><span class="code">    shifted = [val - max_val <span class="keyword">for</span> val <span class="keyword">in</span> logits]</span></div>
-<div class="line line-new"><span class="ln">169</span><span class="code">    log_sum_exp = <span class="builtin">sum</span>(s.exp() <span class="keyword">for</span> s <span class="keyword">in</span> shifted).log()</span></div>
-<div class="line line-new"><span class="ln">170</span><span class="code">    <span class="keyword">return</span> -(shifted[target_id] - log_sum_exp)</span></div>
-<div class="line"><span class="ln">171</span><span class="code"></span></div>
-<div class="line"><span class="ln">172</span><span class="code"><span class="keyword">def</span> <span class="func">gpt</span>(token_id, pos_id, keys, values):</span></div>
-<div class="line"><span class="ln">173</span><span class="code">    tok_emb = state_dict[<span class="string">'wte'</span>][token_id] <span class="comment"># token embedding</span></span></div>
-<div class="line"><span class="ln">174</span><span class="code">    pos_emb = state_dict[<span class="string">'wpe'</span>][pos_id] <span class="comment"># position embedding</span></span></div>
-<div class="line"><span class="ln">175</span><span class="code">    x = [t + p <span class="keyword">for</span> t, p <span class="keyword">in</span> <span class="builtin">zip</span>(tok_emb, pos_emb)] <span class="comment"># joint token and position embedding</span></span></div>
-<div class="line"><span class="ln">176</span><span class="code">    x = rmsnorm(x)</span></div>
-<div class="line"><span class="ln">177</span><span class="code"></span></div>
+<div class="line"><span class="ln">99</span><span class="code">        out = <span class="cls">Value</span>(<span class="number">0</span> <span class="keyword">if</span> <span class="self">self</span>.data &lt; <span class="number">0</span> <span class="keyword">else</span> <span class="self">self</span>.data, (<span class="self">self</span>,), <span class="string">'ReLU'</span>)</span></div>
+<div class="line"><span class="ln">100</span><span class="code">        <span class="keyword">def</span> <span class="func">_backward</span>():</span></div>
+<div class="line"><span class="ln">101</span><span class="code">            <span class="self">self</span>.grad += (out.data &gt; <span class="number">0</span>) * out.grad</span></div>
+<div class="line"><span class="ln">102</span><span class="code">        out._backward = _backward</span></div>
+<div class="line"><span class="ln">103</span><span class="code">        <span class="keyword">return</span> out</span></div>
+<div class="line"><span class="ln">104</span><span class="code"></span></div>
+<div class="line line-changed"><span class="ln">105</span><span class="code">    <span class="keyword">def</span> <span class="func">backward</span>(<span class="self">self</span>): <span class="comment"># iterative topological sort (no recursion limit)</span><span class="opt-tag opt-changed">OPT</span></span></div>
+<div class="line"><span class="ln">106</span><span class="code">        topo = []</span></div>
+<div class="line"><span class="ln">107</span><span class="code">        visited = <span class="builtin">set</span>()</span></div>
+<div class="line line-new"><span class="ln">108</span><span class="code">        stack = [(<span class="self">self</span>, <span class="keyword">False</span>)]</span></div>
+<div class="line line-new"><span class="ln">109</span><span class="code">        <span class="keyword">while</span> stack:</span></div>
+<div class="line line-new"><span class="ln">110</span><span class="code">            node, processed = stack.pop()</span></div>
+<div class="line line-new"><span class="ln">111</span><span class="code">            <span class="keyword">if</span> processed:</span></div>
+<div class="line line-new"><span class="ln">112</span><span class="code">                topo.append(node)</span></div>
+<div class="line line-new"><span class="ln">113</span><span class="code">                <span class="keyword">continue</span></span></div>
+<div class="line line-new"><span class="ln">114</span><span class="code">            <span class="keyword">if</span> node <span class="keyword">in</span> visited:</span></div>
+<div class="line line-new"><span class="ln">115</span><span class="code">                <span class="keyword">continue</span></span></div>
+<div class="line line-new"><span class="ln">116</span><span class="code">            visited.add(node)</span></div>
+<div class="line line-new"><span class="ln">117</span><span class="code">            stack.append((node, <span class="keyword">True</span>))</span></div>
+<div class="line line-new"><span class="ln">118</span><span class="code">            <span class="keyword">for</span> child <span class="keyword">in</span> node._prev:</span></div>
+<div class="line line-new"><span class="ln">119</span><span class="code">                <span class="keyword">if</span> child <span class="keyword">not in</span> visited:</span></div>
+<div class="line line-new"><span class="ln">120</span><span class="code">                    stack.append((child, <span class="keyword">False</span>))</span></div>
+<div class="line"><span class="ln">121</span><span class="code">        <span class="self">self</span>.grad = <span class="number">1</span></span></div>
+<div class="line"><span class="ln">122</span><span class="code">        <span class="keyword">for</span> v <span class="keyword">in</span> <span class="builtin">reversed</span>(topo):</span></div>
+<div class="line"><span class="ln">123</span><span class="code">            v._backward()</span></div>
+<div class="line"><span class="ln">124</span><span class="code"></span></div>
+<div class="line"><span class="ln">125</span><span class="code">    <span class="keyword">def</span> <span class="func">__neg__</span>(<span class="self">self</span>): <span class="keyword">return</span> <span class="self">self</span> * -<span class="number">1</span></span></div>
+<div class="line"><span class="ln">126</span><span class="code">    <span class="keyword">def</span> <span class="func">__radd__</span>(<span class="self">self</span>, other): <span class="keyword">return</span> <span class="self">self</span> + other</span></div>
+<div class="line"><span class="ln">127</span><span class="code">    <span class="keyword">def</span> <span class="func">__sub__</span>(<span class="self">self</span>, other): <span class="keyword">return</span> <span class="self">self</span> + (-other)</span></div>
+<div class="line"><span class="ln">128</span><span class="code">    <span class="keyword">def</span> <span class="func">__rsub__</span>(<span class="self">self</span>, other): <span class="keyword">return</span> other + (-<span class="self">self</span>)</span></div>
+<div class="line"><span class="ln">129</span><span class="code">    <span class="keyword">def</span> <span class="func">__rmul__</span>(<span class="self">self</span>, other): <span class="keyword">return</span> <span class="self">self</span> * other</span></div>
+<div class="line line-new"><span class="ln">130</span><span class="code">    <span class="keyword">def</span> <span class="func">__rtruediv__</span>(<span class="self">self</span>, other): <span class="comment"># uses direct __truediv__ now</span><span class="opt-tag opt-new">NEW</span></span></div>
+<div class="line line-new"><span class="ln">131</span><span class="code">        other = other <span class="keyword">if</span> <span class="builtin">isinstance</span>(other, <span class="cls">Value</span>) <span class="keyword">else</span> <span class="cls">Value</span>(other)</span></div>
+<div class="line line-new"><span class="ln">132</span><span class="code">        <span class="keyword">return</span> other / <span class="self">self</span></span></div>
+<div class="line"><span class="ln">133</span><span class="code">    <span class="keyword">def</span> <span class="func">__repr__</span>(<span class="self">self</span>): <span class="keyword">return</span> <span class="string">f"Value(data={<span class="self">self</span>.data}, grad={<span class="self">self</span>.grad})"</span></span></div>
+<div class="line"><span class="ln">134</span><span class="code"></span></div>
+<div class="line"><span class="ln">135</span><span class="code"><span class="comment"># Initialize the parameters, to store the knowledge of the model.</span></span></div>
+<div class="line"><span class="ln">136</span><span class="code">n_embd = <span class="number">16</span>     <span class="comment"># embedding dimension</span></span></div>
+<div class="line"><span class="ln">137</span><span class="code">n_head = <span class="number">4</span>      <span class="comment"># number of attention heads</span></span></div>
+<div class="line"><span class="ln">138</span><span class="code">n_layer = <span class="number">1</span>     <span class="comment"># number of layers</span></span></div>
+<div class="line"><span class="ln">139</span><span class="code">block_size = <span class="number">8</span>  <span class="comment"># maximum sequence length</span></span></div>
+<div class="line"><span class="ln">140</span><span class="code">head_dim = n_embd // n_head <span class="comment"># dimension of each head</span></span></div>
+<div class="line"><span class="ln">141</span><span class="code">matrix = <span class="keyword">lambda</span> nout, nin, std=<span class="number">0.02</span>: [[<span class="cls">Value</span>(random.gauss(<span class="number">0</span>, std)) <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(nin)] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(nout)]</span></div>
+<div class="line line-changed"><span class="ln">142</span><span class="code">state_dict = {<span class="string">'wte'</span>: matrix(vocab_size, n_embd), <span class="string">'wpe'</span>: matrix(block_size, n_embd)} <span class="comment"># weight tying: wte doubles as lm_head</span><span class="opt-tag opt-changed">OPT</span></span></div>
+<div class="line"><span class="ln">143</span><span class="code"><span class="keyword">for</span> i <span class="keyword">in</span> <span class="builtin">range</span>(n_layer):</span></div>
+<div class="line"><span class="ln">144</span><span class="code">    state_dict[<span class="string">f'layer{i}.attn_wq'</span>] = matrix(n_embd, n_embd)</span></div>
+<div class="line"><span class="ln">145</span><span class="code">    state_dict[<span class="string">f'layer{i}.attn_wk'</span>] = matrix(n_embd, n_embd)</span></div>
+<div class="line"><span class="ln">146</span><span class="code">    state_dict[<span class="string">f'layer{i}.attn_wv'</span>] = matrix(n_embd, n_embd)</span></div>
+<div class="line"><span class="ln">147</span><span class="code">    state_dict[<span class="string">f'layer{i}.attn_wo'</span>] = matrix(n_embd, n_embd, std=<span class="number">0</span>)</span></div>
+<div class="line"><span class="ln">148</span><span class="code">    state_dict[<span class="string">f'layer{i}.mlp_fc1'</span>] = matrix(<span class="number">4</span> * n_embd, n_embd)</span></div>
+<div class="line"><span class="ln">149</span><span class="code">    state_dict[<span class="string">f'layer{i}.mlp_fc2'</span>] = matrix(n_embd, <span class="number">4</span> * n_embd, std=<span class="number">0</span>)</span></div>
+<div class="line"><span class="ln">150</span><span class="code">params = [p <span class="keyword">for</span> mat <span class="keyword">in</span> state_dict.values() <span class="keyword">for</span> row <span class="keyword">in</span> mat <span class="keyword">for</span> p <span class="keyword">in</span> row] <span class="comment"># flatten params into a single list[Value]</span></span></div>
+<div class="line"><span class="ln">151</span><span class="code"><span class="builtin">print</span>(<span class="string">f"num params: {<span class="builtin">len</span>(params)}"</span>)</span></div>
+<div class="line"><span class="ln">152</span><span class="code"></span></div>
+<div class="line"><span class="ln">153</span><span class="code"><span class="comment"># Define the model architecture: a stateless function mapping token sequence and parameters to logits over what comes next.</span></span></div>
+<div class="line"><span class="ln">154</span><span class="code"><span class="comment"># Follow GPT-2, blessed among the GPTs, with minor differences: layernorm -&gt; rmsnorm, no biases, GeLU -&gt; ReLU^2</span></span></div>
+<div class="line"><span class="ln">155</span><span class="code"><span class="keyword">def</span> <span class="func">linear</span>(x, w):</span></div>
+<div class="line"><span class="ln">156</span><span class="code">    <span class="keyword">return</span> [<span class="builtin">sum</span>(wi * xi <span class="keyword">for</span> wi, xi <span class="keyword">in</span> <span class="builtin">zip</span>(wo, x)) <span class="keyword">for</span> wo <span class="keyword">in</span> w]</span></div>
+<div class="line"><span class="ln">157</span><span class="code"></span></div>
+<div class="line"><span class="ln">158</span><span class="code"><span class="keyword">def</span> <span class="func">softmax</span>(logits):</span></div>
+<div class="line"><span class="ln">159</span><span class="code">    max_val = <span class="builtin">max</span>(val.data <span class="keyword">for</span> val <span class="keyword">in</span> logits)</span></div>
+<div class="line"><span class="ln">160</span><span class="code">    exps = [(val - max_val).exp() <span class="keyword">for</span> val <span class="keyword">in</span> logits]</span></div>
+<div class="line"><span class="ln">161</span><span class="code">    total = <span class="builtin">sum</span>(exps)</span></div>
+<div class="line"><span class="ln">162</span><span class="code">    <span class="keyword">return</span> [e / total <span class="keyword">for</span> e <span class="keyword">in</span> exps]</span></div>
+<div class="line"><span class="ln">163</span><span class="code"></span></div>
+<div class="line"><span class="ln">164</span><span class="code"><span class="keyword">def</span> <span class="func">rmsnorm</span>(x):</span></div>
+<div class="line"><span class="ln">165</span><span class="code">    ms = <span class="builtin">sum</span>(xi * xi <span class="keyword">for</span> xi <span class="keyword">in</span> x) / <span class="builtin">len</span>(x)</span></div>
+<div class="line"><span class="ln">166</span><span class="code">    scale = (ms + <span class="number">1e-5</span>) ** -<span class="number">0.5</span></span></div>
+<div class="line"><span class="ln">167</span><span class="code">    <span class="keyword">return</span> [xi * scale <span class="keyword">for</span> xi <span class="keyword">in</span> x]</span></div>
+<div class="line"><span class="ln">168</span><span class="code"></span></div>
+<div class="line line-new"><span class="ln">169</span><span class="code"><span class="keyword">def</span> <span class="func">cross_entropy</span>(logits, target_id): <span class="comment"># fused log-softmax + nll: fewer nodes, numerically stable</span><span class="opt-tag opt-new">NEW</span></span></div>
+<div class="line line-new"><span class="ln">170</span><span class="code">    max_val = <span class="builtin">max</span>(val.data <span class="keyword">for</span> val <span class="keyword">in</span> logits)</span></div>
+<div class="line line-new"><span class="ln">171</span><span class="code">    shifted = [val - max_val <span class="keyword">for</span> val <span class="keyword">in</span> logits]</span></div>
+<div class="line line-new"><span class="ln">172</span><span class="code">    log_sum_exp = <span class="builtin">sum</span>(s.exp() <span class="keyword">for</span> s <span class="keyword">in</span> shifted).log()</span></div>
+<div class="line line-new"><span class="ln">173</span><span class="code">    <span class="keyword">return</span> -(shifted[target_id] - log_sum_exp)</span></div>
+<div class="line"><span class="ln">174</span><span class="code"></span></div>
+<div class="line"><span class="ln">175</span><span class="code"><span class="keyword">def</span> <span class="func">gpt</span>(token_id, pos_id, keys, values):</span></div>
+<div class="line"><span class="ln">176</span><span class="code">    tok_emb = state_dict[<span class="string">'wte'</span>][token_id] <span class="comment"># token embedding</span></span></div>
+<div class="line"><span class="ln">177</span><span class="code">    pos_emb = state_dict[<span class="string">'wpe'</span>][pos_id] <span class="comment"># position embedding</span></span></div>
+<div class="line"><span class="ln">178</span><span class="code">    x = [t + p <span class="keyword">for</span> t, p <span class="keyword">in</span> <span class="builtin">zip</span>(tok_emb, pos_emb)] <span class="comment"># joint token and position embedding</span></span></div>
+<div class="line"><span class="ln">179</span><span class="code">    x = rmsnorm(x)</span></div>
+<div class="line"><span class="ln">180</span><span class="code"></span></div>
+<div class="line"><span class="ln">181</span><span class="code">    <span class="keyword">for</span> li <span class="keyword">in</span> <span class="builtin">range</span>(n_layer):</span></div>
+<div class="line"><span class="ln">182</span><span class="code">        <span class="comment"># 1) Multi-head attention block</span></span></div>
+<div class="line"><span class="ln">183</span><span class="code">        x_residual = x</span></div>
+<div class="line"><span class="ln">184</span><span class="code">        x = rmsnorm(x)</span></div>
+<div class="line"><span class="ln">185</span><span class="code">        q = linear(x, state_dict[<span class="string">f'layer{li}.attn_wq'</span>])</span></div>
+<div class="line"><span class="ln">186</span><span class="code">        k = linear(x, state_dict[<span class="string">f'layer{li}.attn_wk'</span>])</span></div>
+<div class="line"><span class="ln">187</span><span class="code">        v = linear(x, state_dict[<span class="string">f'layer{li}.attn_wv'</span>])</span></div>
+<div class="line"><span class="ln">188</span><span class="code">        keys[li].append(k)</span></div>
+<div class="line"><span class="ln">189</span><span class="code">        values[li].append(v)</span></div>
+<div class="line"><span class="ln">190</span><span class="code">        x_attn = []</span></div>
+<div class="line"><span class="ln">191</span><span class="code">        <span class="keyword">for</span> h <span class="keyword">in</span> <span class="builtin">range</span>(n_head):</span></div>
+<div class="line"><span class="ln">192</span><span class="code">            hs = h * head_dim</span></div>
+<div class="line"><span class="ln">193</span><span class="code">            q_h = q[hs:hs+head_dim]</span></div>
+<div class="line"><span class="ln">194</span><span class="code">            k_h = [ki[hs:hs+head_dim] <span class="keyword">for</span> ki <span class="keyword">in</span> keys[li]]</span></div>
+<div class="line"><span class="ln">195</span><span class="code">            v_h = [vi[hs:hs+head_dim] <span class="keyword">for</span> vi <span class="keyword">in</span> values[li]]</span></div>
+<div class="line"><span class="ln">196</span><span class="code">            attn_logits = [<span class="builtin">sum</span>(q_h[j] * k_h[t][j] <span class="keyword">for</span> j <span class="keyword">in</span> <span class="builtin">range</span>(head_dim)) / head_dim**<span class="number">0.5</span> <span class="keyword">for</span> t <span class="keyword">in</span> <span class="builtin">range</span>(<span class="builtin">len</span>(k_h))]</span></div>
 </pre></div>
-
-<!-- ============ COLUMN 3 ============ -->
+<!-- ============ COLUMN 3: Lines 197-293 ============ -->
 <div class="column"><pre>
-<div class="line"><span class="ln">178</span><span class="code">    <span class="keyword">for</span> li <span class="keyword">in</span> <span class="builtin">range</span>(n_layer):</span></div>
-<div class="line"><span class="ln">179</span><span class="code">        <span class="comment"># 1) Multi-head attention block</span></span></div>
-<div class="line"><span class="ln">180</span><span class="code">        x_residual = x</span></div>
-<div class="line"><span class="ln">181</span><span class="code">        x = rmsnorm(x)</span></div>
-<div class="line"><span class="ln">182</span><span class="code">        q = linear(x, state_dict[<span class="string">f'layer{li}.attn_wq'</span>])</span></div>
-<div class="line"><span class="ln">183</span><span class="code">        k = linear(x, state_dict[<span class="string">f'layer{li}.attn_wk'</span>])</span></div>
-<div class="line"><span class="ln">184</span><span class="code">        v = linear(x, state_dict[<span class="string">f'layer{li}.attn_wv'</span>])</span></div>
-<div class="line"><span class="ln">185</span><span class="code">        keys[li].append(k)</span></div>
-<div class="line"><span class="ln">186</span><span class="code">        values[li].append(v)</span></div>
-<div class="line"><span class="ln">187</span><span class="code">        x_attn = []</span></div>
-<div class="line"><span class="ln">188</span><span class="code">        <span class="keyword">for</span> h <span class="keyword">in</span> <span class="builtin">range</span>(n_head):</span></div>
-<div class="line"><span class="ln">189</span><span class="code">            hs = h * head_dim</span></div>
-<div class="line"><span class="ln">190</span><span class="code">            q_h = q[hs:hs+head_dim]</span></div>
-<div class="line"><span class="ln">191</span><span class="code">            k_h = [ki[hs:hs+head_dim] <span class="keyword">for</span> ki <span class="keyword">in</span> keys[li]]</span></div>
-<div class="line"><span class="ln">192</span><span class="code">            v_h = [vi[hs:hs+head_dim] <span class="keyword">for</span> vi <span class="keyword">in</span> values[li]]</span></div>
-<div class="line"><span class="ln">193</span><span class="code">            attn_logits = [<span class="builtin">sum</span>(q_h[j] * k_h[t][j] <span class="keyword">for</span> j <span class="keyword">in</span> <span class="builtin">range</span>(head_dim)) / head_dim**<span class="number">0.5</span> <span class="keyword">for</span> t <span class="keyword">in</span> <span class="builtin">range</span>(<span class="builtin">len</span>(k_h))]</span></div>
-<div class="line"><span class="ln">194</span><span class="code">            attn_weights = softmax(attn_logits)</span></div>
-<div class="line"><span class="ln">195</span><span class="code">            head_out = [<span class="builtin">sum</span>(attn_weights[t] * v_h[t][j] <span class="keyword">for</span> t <span class="keyword">in</span> <span class="builtin">range</span>(<span class="builtin">len</span>(v_h))) <span class="keyword">for</span> j <span class="keyword">in</span> <span class="builtin">range</span>(head_dim)]</span></div>
-<div class="line"><span class="ln">196</span><span class="code">            x_attn.extend(head_out)</span></div>
-<div class="line"><span class="ln">197</span><span class="code">        x = linear(x_attn, state_dict[<span class="string">f'layer{li}.attn_wo'</span>])</span></div>
-<div class="line"><span class="ln">198</span><span class="code">        x = [a + b <span class="keyword">for</span> a, b <span class="keyword">in</span> <span class="builtin">zip</span>(x, x_residual)]</span></div>
-<div class="line"><span class="ln">199</span><span class="code">        <span class="comment"># 2) MLP block</span></span></div>
-<div class="line"><span class="ln">200</span><span class="code">        x_residual = x</span></div>
-<div class="line"><span class="ln">201</span><span class="code">        x = rmsnorm(x)</span></div>
-<div class="line"><span class="ln">202</span><span class="code">        x = linear(x, state_dict[<span class="string">f'layer{li}.mlp_fc1'</span>])</span></div>
-<div class="line"><span class="ln">203</span><span class="code">        x = [xi.relu() ** <span class="number">2</span> <span class="keyword">for</span> xi <span class="keyword">in</span> x]</span></div>
-<div class="line"><span class="ln">204</span><span class="code">        x = linear(x, state_dict[<span class="string">f'layer{li}.mlp_fc2'</span>])</span></div>
-<div class="line"><span class="ln">205</span><span class="code">        x = [a + b <span class="keyword">for</span> a, b <span class="keyword">in</span> <span class="builtin">zip</span>(x, x_residual)]</span></div>
-<div class="line"><span class="ln">206</span><span class="code"></span></div>
-<div class="line"><span class="ln">207</span><span class="code">    logits = linear(x, state_dict[<span class="string">'lm_head'</span>])</span></div>
-<div class="line"><span class="ln">208</span><span class="code">    <span class="keyword">return</span> logits</span></div>
+<div class="line"><span class="ln">197</span><span class="code">            attn_weights = softmax(attn_logits)</span></div>
+<div class="line"><span class="ln">198</span><span class="code">            head_out = [<span class="builtin">sum</span>(attn_weights[t] * v_h[t][j] <span class="keyword">for</span> t <span class="keyword">in</span> <span class="builtin">range</span>(<span class="builtin">len</span>(v_h))) <span class="keyword">for</span> j <span class="keyword">in</span> <span class="builtin">range</span>(head_dim)]</span></div>
+<div class="line"><span class="ln">199</span><span class="code">            x_attn.extend(head_out)</span></div>
+<div class="line"><span class="ln">200</span><span class="code">        x = linear(x_attn, state_dict[<span class="string">f'layer{li}.attn_wo'</span>])</span></div>
+<div class="line"><span class="ln">201</span><span class="code">        x = [a + b <span class="keyword">for</span> a, b <span class="keyword">in</span> <span class="builtin">zip</span>(x, x_residual)]</span></div>
+<div class="line"><span class="ln">202</span><span class="code">        <span class="comment"># 2) MLP block</span></span></div>
+<div class="line"><span class="ln">203</span><span class="code">        x_residual = x</span></div>
+<div class="line"><span class="ln">204</span><span class="code">        x = rmsnorm(x)</span></div>
+<div class="line"><span class="ln">205</span><span class="code">        x = linear(x, state_dict[<span class="string">f'layer{li}.mlp_fc1'</span>])</span></div>
+<div class="line"><span class="ln">206</span><span class="code">        x = [xi.relu() ** <span class="number">2</span> <span class="keyword">for</span> xi <span class="keyword">in</span> x]</span></div>
+<div class="line"><span class="ln">207</span><span class="code">        x = linear(x, state_dict[<span class="string">f'layer{li}.mlp_fc2'</span>])</span></div>
+<div class="line"><span class="ln">208</span><span class="code">        x = [a + b <span class="keyword">for</span> a, b <span class="keyword">in</span> <span class="builtin">zip</span>(x, x_residual)]</span></div>
 <div class="line"><span class="ln">209</span><span class="code"></span></div>
-<div class="line"><span class="ln">210</span><span class="code"><span class="comment"># Let there be Adam, the blessed optimizer and its buffers</span></span></div>
-<div class="line"><span class="ln">211</span><span class="code">learning_rate, beta1, beta2, eps_adam = <span class="number">1e-2</span>, <span class="number">0.9</span>, <span class="number">0.95</span>, <span class="number">1e-8</span></span></div>
-<div class="line"><span class="ln">212</span><span class="code">m = [<span class="number">0.0</span>] * <span class="builtin">len</span>(params) <span class="comment"># first moment buffer</span></span></div>
-<div class="line"><span class="ln">213</span><span class="code">v = [<span class="number">0.0</span>] * <span class="builtin">len</span>(params) <span class="comment"># second moment buffer</span></span></div>
-<div class="line line-new"><span class="ln">214</span><span class="code">b1_prod, b2_prod = <span class="number">1.0</span>, <span class="number">1.0</span> <span class="comment"># running product for bias correction</span><span class="opt-tag opt-new">NEW</span></span></div>
-<div class="line"><span class="ln">215</span><span class="code"></span></div>
-<div class="line"><span class="ln">216</span><span class="code"><span class="comment"># Repeat in sequence</span></span></div>
-<div class="line"><span class="ln">217</span><span class="code">num_steps = <span class="number">500</span> <span class="comment"># number of training steps</span></span></div>
-<div class="line"><span class="ln">218</span><span class="code"><span class="keyword">for</span> step <span class="keyword">in</span> <span class="builtin">range</span>(num_steps):</span></div>
+<div class="line line-changed"><span class="ln">210</span><span class="code">    logits = linear(x, state_dict[<span class="string">'wte'</span>]) <span class="comment"># weight tying: reuse token embeddings as output projection</span><span class="opt-tag opt-changed">OPT</span></span></div>
+<div class="line"><span class="ln">211</span><span class="code">    <span class="keyword">return</span> logits</span></div>
+<div class="line"><span class="ln">212</span><span class="code"></span></div>
+<div class="line"><span class="ln">213</span><span class="code"><span class="comment"># Let there be Adam, the blessed optimizer and its buffers</span></span></div>
+<div class="line line-changed"><span class="ln">214</span><span class="code">learning_rate, beta1, beta2, eps_adam, weight_decay = <span class="number">1e-2</span>, <span class="number">0.9</span>, <span class="number">0.95</span>, <span class="number">1e-8</span>, <span class="number">1e-4</span><span class="opt-tag opt-changed">OPT</span></span></div>
+<div class="line"><span class="ln">215</span><span class="code">m = [<span class="number">0.0</span>] * <span class="builtin">len</span>(params) <span class="comment"># first moment buffer</span></span></div>
+<div class="line"><span class="ln">216</span><span class="code">v = [<span class="number">0.0</span>] * <span class="builtin">len</span>(params) <span class="comment"># second moment buffer</span></span></div>
+<div class="line line-changed"><span class="ln">217</span><span class="code">b1_prod, b2_prod = <span class="number">1.0</span>, <span class="number">1.0</span> <span class="comment"># running product for bias correction</span><span class="opt-tag opt-changed">OPT</span></span></div>
+<div class="line line-new"><span class="ln">218</span><span class="code">max_grad_norm = <span class="number">1.0</span> <span class="comment"># gradient clipping threshold</span><span class="opt-tag opt-new">NEW</span></span></div>
 <div class="line"><span class="ln">219</span><span class="code"></span></div>
-<div class="line"><span class="ln">220</span><span class="code">    <span class="comment"># Take single document, tokenize it, surround it with BOS special token on both sides</span></span></div>
-<div class="line"><span class="ln">221</span><span class="code">    doc = docs[step % <span class="builtin">len</span>(docs)]</span></div>
-<div class="line"><span class="ln">222</span><span class="code">    tokens = [BOS] + [stoi[ch] <span class="keyword">for</span> ch <span class="keyword">in</span> doc] + [BOS]</span></div>
-<div class="line"><span class="ln">223</span><span class="code">    n = <span class="builtin">min</span>(block_size, <span class="builtin">len</span>(tokens) - <span class="number">1</span>)</span></div>
+<div class="line"><span class="ln">220</span><span class="code"><span class="comment"># Repeat in sequence</span></span></div>
+<div class="line"><span class="ln">221</span><span class="code">num_steps = <span class="number">500</span> <span class="comment"># number of training steps</span></span></div>
+<div class="line"><span class="ln">222</span><span class="code"><span class="keyword">for</span> step <span class="keyword">in</span> <span class="builtin">range</span>(num_steps):</span></div>
+<div class="line line-new"><span class="ln">223</span><span class="code">    t0 = time.time()<span class="opt-tag opt-new">NEW</span></span></div>
 <div class="line"><span class="ln">224</span><span class="code"></span></div>
-<div class="line"><span class="ln">225</span><span class="code">    <span class="comment"># Forward the token sequence through the model, building up the computation graph all the way to the loss.</span></span></div>
-<div class="line"><span class="ln">226</span><span class="code">    keys, values = [[] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(n_layer)], [[] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(n_layer)]</span></div>
-<div class="line"><span class="ln">227</span><span class="code">    losses = []</span></div>
-<div class="line"><span class="ln">228</span><span class="code">    <span class="keyword">for</span> pos_id <span class="keyword">in</span> <span class="builtin">range</span>(n):</span></div>
-<div class="line"><span class="ln">229</span><span class="code">        token_id, target_id = tokens[pos_id], tokens[pos_id + <span class="number">1</span>]</span></div>
-<div class="line"><span class="ln">230</span><span class="code">        logits = gpt(token_id, pos_id, keys, values)</span></div>
-<div class="line line-changed"><span class="ln">231</span><span class="code">        loss_t = cross_entropy(logits, target_id) <span class="comment"># fused cross-entropy replaces softmax+log</span><span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line"><span class="ln">232</span><span class="code">        losses.append(loss_t)</span></div>
-<div class="line line-changed"><span class="ln">233</span><span class="code">    loss = (<span class="number">1</span> / n) * <span class="builtin">sum</span>(losses[<span class="number">1</span>:], losses[<span class="number">0</span>]) <span class="comment"># avoid phantom Value(0) node</span><span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line"><span class="ln">234</span><span class="code"></span></div>
-<div class="line"><span class="ln">235</span><span class="code">    <span class="comment"># Backward the loss, calculating the gradients with respect to all model parameters.</span></span></div>
-<div class="line"><span class="ln">236</span><span class="code">    loss.backward()</span></div>
-<div class="line"><span class="ln">237</span><span class="code"></span></div>
-<div class="line"><span class="ln">238</span><span class="code">    <span class="comment"># Adam optimizer update: update the model parameters based on the corresponding gradients.</span></span></div>
-<div class="line"><span class="ln">239</span><span class="code">    lr_t = learning_rate * (<span class="number">1</span> - step / num_steps)</span></div>
-<div class="line line-changed"><span class="ln">240</span><span class="code">    b1_prod *= beta1; b2_prod *= beta2 <span class="comment"># running products instead of beta**step</span><span class="opt-tag opt-changed">OPT</span></span></div>
-<div class="line"><span class="ln">241</span><span class="code">    <span class="keyword">for</span> i, p <span class="keyword">in</span> <span class="builtin">enumerate</span>(params):</span></div>
-<div class="line"><span class="ln">242</span><span class="code">        m[i] = beta1 * m[i] + (<span class="number">1</span> - beta1) * p.grad</span></div>
-<div class="line"><span class="ln">243</span><span class="code">        v[i] = beta2 * v[i] + (<span class="number">1</span> - beta2) * p.grad ** <span class="number">2</span></span></div>
-<div class="line line-changed"><span class="ln">244</span><span class="code">        m_hat = m[i] / (<span class="number">1</span> - b1_prod) <span class="comment"># stable bias correction</span></span></div>
-<div class="line line-changed"><span class="ln">245</span><span class="code">        v_hat = v[i] / (<span class="number">1</span> - b2_prod)</span></div>
-<div class="line"><span class="ln">246</span><span class="code">        p.data -= lr_t * m_hat / (v_hat ** <span class="number">0.5</span> + eps_adam)</span></div>
-<div class="line"><span class="ln">247</span><span class="code">        p.grad = <span class="number">0</span></span></div>
-<div class="line"><span class="ln">248</span><span class="code"></span></div>
-<div class="line"><span class="ln">249</span><span class="code">    <span class="builtin">print</span>(<span class="string">f"step {step+1:4d} / {num_steps:4d} | loss {loss.data:.4f}"</span>)</span></div>
-<div class="line"><span class="ln">250</span><span class="code"></span></div>
-<div class="line"><span class="ln">251</span><span class="code"><span class="comment"># Inference: may the model babble back to us</span></span></div>
-<div class="line"><span class="ln">252</span><span class="code">temperature = <span class="number">0.6</span> <span class="comment"># in (0, 1], control the "creativity" of generated text, low to high</span></span></div>
-<div class="line"><span class="ln">253</span><span class="code"><span class="builtin">print</span>(<span class="string">"\n--- inference ---"</span>)</span></div>
-<div class="line"><span class="ln">254</span><span class="code"><span class="keyword">for</span> sample_idx <span class="keyword">in</span> <span class="builtin">range</span>(<span class="number">20</span>):</span></div>
-<div class="line"><span class="ln">255</span><span class="code">    keys, values = [[] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(n_layer)], [[] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(n_layer)]</span></div>
-<div class="line"><span class="ln">256</span><span class="code">    token_id = BOS</span></div>
-<div class="line"><span class="ln">257</span><span class="code">    <span class="builtin">print</span>(<span class="string">f"sample {sample_idx+1}: "</span>, end=<span class="string">""</span>)</span></div>
-<div class="line"><span class="ln">258</span><span class="code">    <span class="keyword">for</span> pos_id <span class="keyword">in</span> <span class="builtin">range</span>(block_size):</span></div>
-<div class="line"><span class="ln">259</span><span class="code">        logits = gpt(token_id, pos_id, keys, values)</span></div>
-<div class="line"><span class="ln">260</span><span class="code">        probs = softmax([l / temperature <span class="keyword">for</span> l <span class="keyword">in</span> logits])</span></div>
-<div class="line"><span class="ln">261</span><span class="code">        token_id = random.choices(<span class="builtin">range</span>(vocab_size), weights=[p.data <span class="keyword">for</span> p <span class="keyword">in</span> probs])[<span class="number">0</span>]</span></div>
-<div class="line"><span class="ln">262</span><span class="code">        <span class="keyword">if</span> token_id == BOS:</span></div>
-<div class="line"><span class="ln">263</span><span class="code">            <span class="keyword">break</span></span></div>
-<div class="line"><span class="ln">264</span><span class="code">        <span class="builtin">print</span>(itos[token_id], end=<span class="string">""</span>)</span></div>
-<div class="line"><span class="ln">265</span><span class="code">    <span class="builtin">print</span>()</span></div>
+<div class="line"><span class="ln">225</span><span class="code">    <span class="comment"># Take single document, tokenize it, surround it with BOS special token on both sides</span></span></div>
+<div class="line line-changed"><span class="ln">226</span><span class="code">    doc = train_docs[step % <span class="builtin">len</span>(train_docs)]<span class="opt-tag opt-changed">OPT</span></span></div>
+<div class="line"><span class="ln">227</span><span class="code">    tokens = [BOS] + [stoi[ch] <span class="keyword">for</span> ch <span class="keyword">in</span> doc] + [BOS]</span></div>
+<div class="line"><span class="ln">228</span><span class="code">    n = <span class="builtin">min</span>(block_size, <span class="builtin">len</span>(tokens) - <span class="number">1</span>)</span></div>
+<div class="line"><span class="ln">229</span><span class="code"></span></div>
+<div class="line"><span class="ln">230</span><span class="code">    <span class="comment"># Forward the token sequence through the model, building up the computation graph all the way to the loss.</span></span></div>
+<div class="line"><span class="ln">231</span><span class="code">    keys, values = [[] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(n_layer)], [[] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(n_layer)]</span></div>
+<div class="line"><span class="ln">232</span><span class="code">    losses = []</span></div>
+<div class="line"><span class="ln">233</span><span class="code">    <span class="keyword">for</span> pos_id <span class="keyword">in</span> <span class="builtin">range</span>(n):</span></div>
+<div class="line"><span class="ln">234</span><span class="code">        token_id, target_id = tokens[pos_id], tokens[pos_id + <span class="number">1</span>]</span></div>
+<div class="line"><span class="ln">235</span><span class="code">        logits = gpt(token_id, pos_id, keys, values)</span></div>
+<div class="line line-changed"><span class="ln">236</span><span class="code">        loss_t = cross_entropy(logits, target_id) <span class="comment"># fused cross-entropy replaces softmax+log</span><span class="opt-tag opt-changed">OPT</span></span></div>
+<div class="line"><span class="ln">237</span><span class="code">        losses.append(loss_t)</span></div>
+<div class="line line-changed"><span class="ln">238</span><span class="code">    loss = (<span class="number">1</span> / n) * <span class="builtin">sum</span>(losses[<span class="number">1</span>:], losses[<span class="number">0</span>]) <span class="comment"># avoid phantom Value(0) node</span><span class="opt-tag opt-changed">OPT</span></span></div>
+<div class="line"><span class="ln">239</span><span class="code"></span></div>
+<div class="line"><span class="ln">240</span><span class="code">    <span class="comment"># Backward the loss, calculating the gradients with respect to all model parameters.</span></span></div>
+<div class="line"><span class="ln">241</span><span class="code">    loss.backward()</span></div>
+<div class="line"><span class="ln">242</span><span class="code"></span></div>
+<div class="line line-new"><span class="ln">243</span><span class="code">    <span class="comment"># Gradient clipping by global norm</span><span class="opt-tag opt-new">NEW</span></span></div>
+<div class="line line-new"><span class="ln">244</span><span class="code">    grad_norm = <span class="builtin">sum</span>(p.grad ** <span class="number">2</span> <span class="keyword">for</span> p <span class="keyword">in</span> params) ** <span class="number">0.5</span></span></div>
+<div class="line line-new"><span class="ln">245</span><span class="code">    <span class="keyword">if</span> grad_norm &gt; max_grad_norm:</span></div>
+<div class="line line-new"><span class="ln">246</span><span class="code">        <span class="keyword">for</span> p <span class="keyword">in</span> params: p.grad *= max_grad_norm / grad_norm</span></div>
+<div class="line"><span class="ln">247</span><span class="code"></span></div>
+<div class="line line-changed"><span class="ln">248</span><span class="code">    <span class="comment"># AdamW optimizer update with cosine learning rate schedule</span><span class="opt-tag opt-changed">OPT</span></span></div>
+<div class="line line-changed"><span class="ln">249</span><span class="code">    lr_t = learning_rate * <span class="number">0.5</span> * (<span class="number">1</span> + math.cos(math.pi * step / num_steps))</span></div>
+<div class="line line-changed"><span class="ln">250</span><span class="code">    b1_prod *= beta1; b2_prod *= beta2 <span class="comment"># running products instead of beta**step</span></span></div>
+<div class="line"><span class="ln">251</span><span class="code">    <span class="keyword">for</span> i, p <span class="keyword">in</span> <span class="builtin">enumerate</span>(params):</span></div>
+<div class="line"><span class="ln">252</span><span class="code">        m[i] = beta1 * m[i] + (<span class="number">1</span> - beta1) * p.grad</span></div>
+<div class="line"><span class="ln">253</span><span class="code">        v[i] = beta2 * v[i] + (<span class="number">1</span> - beta2) * p.grad ** <span class="number">2</span></span></div>
+<div class="line line-changed"><span class="ln">254</span><span class="code">        m_hat = m[i] / (<span class="number">1</span> - b1_prod) <span class="comment"># stable bias correction</span></span></div>
+<div class="line line-changed"><span class="ln">255</span><span class="code">        v_hat = v[i] / (<span class="number">1</span> - b2_prod)</span></div>
+<div class="line line-changed"><span class="ln">256</span><span class="code">        p.data -= lr_t * (m_hat / (v_hat ** <span class="number">0.5</span> + eps_adam) + weight_decay * p.data)<span class="opt-tag opt-changed">OPT</span></span></div>
+<div class="line"><span class="ln">257</span><span class="code">        p.grad = <span class="number">0</span></span></div>
+<div class="line"><span class="ln">258</span><span class="code"></span></div>
+<div class="line line-changed"><span class="ln">259</span><span class="code">    <span class="builtin">print</span>(<span class="string">f"step {step+1:4d}/{num_steps:4d} | loss {loss.data:.4f} | {(time.time()-t0)*1000:.0f}ms"</span>)<span class="opt-tag opt-changed">OPT</span></span></div>
+<div class="line"><span class="ln">260</span><span class="code"></span></div>
+<div class="line line-new"><span class="ln">261</span><span class="code">    <span class="comment"># Periodic validation on held-out documents</span><span class="opt-tag opt-new">NEW</span></span></div>
+<div class="line line-new"><span class="ln">262</span><span class="code">    <span class="keyword">if</span> (step + <span class="number">1</span>) % <span class="number">100</span> == <span class="number">0</span>:</span></div>
+<div class="line line-new"><span class="ln">263</span><span class="code">        val_loss, val_n = <span class="number">0.0</span>, <span class="number">0</span></span></div>
+<div class="line line-new"><span class="ln">264</span><span class="code">        <span class="keyword">for</span> vdoc <span class="keyword">in</span> val_docs[:<span class="number">20</span>]:</span></div>
+<div class="line line-new"><span class="ln">265</span><span class="code">            vt = [BOS] + [stoi[ch] <span class="keyword">for</span> ch <span class="keyword">in</span> vdoc] + [BOS]</span></div>
+<div class="line line-new"><span class="ln">266</span><span class="code">            vn = <span class="builtin">min</span>(block_size, <span class="builtin">len</span>(vt) - <span class="number">1</span>)</span></div>
+<div class="line line-new"><span class="ln">267</span><span class="code">            vkeys, vvals = [[] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(n_layer)], [[] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(n_layer)]</span></div>
+<div class="line line-new"><span class="ln">268</span><span class="code">            <span class="keyword">for</span> vp <span class="keyword">in</span> <span class="builtin">range</span>(vn):</span></div>
+<div class="line line-new"><span class="ln">269</span><span class="code">                vlogits = gpt(vt[vp], vp, vkeys, vvals)</span></div>
+<div class="line line-new"><span class="ln">270</span><span class="code">                mx = <span class="builtin">max</span>(l.data <span class="keyword">for</span> l <span class="keyword">in</span> vlogits) <span class="comment"># pure-float NLL, no autograd overhead</span></span></div>
+<div class="line line-new"><span class="ln">271</span><span class="code">                val_loss -= vlogits[vt[vp+<span class="number">1</span>]].data - mx - math.log(<span class="builtin">sum</span>(math.exp(l.data - mx) <span class="keyword">for</span> l <span class="keyword">in</span> vlogits))</span></div>
+<div class="line line-new"><span class="ln">272</span><span class="code">                val_n += <span class="number">1</span></span></div>
+<div class="line line-new"><span class="ln">273</span><span class="code">        <span class="builtin">print</span>(<span class="string">f"  val loss: {val_loss / val_n:.4f}"</span>)</span></div>
+<div class="line"><span class="ln">274</span><span class="code"></span></div>
+<div class="line line-changed"><span class="ln">275</span><span class="code"><span class="comment"># Inference: may the model babble back to us, with top-k sampling</span><span class="opt-tag opt-changed">OPT</span></span></div>
+<div class="line line-changed"><span class="ln">276</span><span class="code">temperature, top_k = <span class="number">0.6</span>, <span class="number">5</span></span></div>
+<div class="line"><span class="ln">277</span><span class="code"><span class="builtin">print</span>(<span class="string">"\n--- inference ---"</span>)</span></div>
+<div class="line"><span class="ln">278</span><span class="code"><span class="keyword">for</span> sample_idx <span class="keyword">in</span> <span class="builtin">range</span>(<span class="number">20</span>):</span></div>
+<div class="line"><span class="ln">279</span><span class="code">    keys, values = [[] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(n_layer)], [[] <span class="keyword">for</span> _ <span class="keyword">in</span> <span class="builtin">range</span>(n_layer)]</span></div>
+<div class="line"><span class="ln">280</span><span class="code">    token_id = BOS</span></div>
+<div class="line line-changed"><span class="ln">281</span><span class="code">    <span class="builtin">print</span>(<span class="string">f"sample {sample_idx+1:2d}: "</span>, end=<span class="string">""</span>)</span></div>
+<div class="line"><span class="ln">282</span><span class="code">    <span class="keyword">for</span> pos_id <span class="keyword">in</span> <span class="builtin">range</span>(block_size):</span></div>
+<div class="line"><span class="ln">283</span><span class="code">        logits = gpt(token_id, pos_id, keys, values)</span></div>
+<div class="line line-new"><span class="ln">284</span><span class="code">        top_ids = <span class="builtin">sorted</span>(<span class="builtin">range</span>(vocab_size), key=<span class="keyword">lambda</span> i: logits[i].data, reverse=<span class="keyword">True</span>)[:<span class="number">top_k</span>]<span class="opt-tag opt-new">NEW</span></span></div>
+<div class="line line-new"><span class="ln">285</span><span class="code">        top_logits = [logits[i].data / temperature <span class="keyword">for</span> i <span class="keyword">in</span> top_ids]</span></div>
+<div class="line line-new"><span class="ln">286</span><span class="code">        max_tl = <span class="builtin">max</span>(top_logits)</span></div>
+<div class="line line-new"><span class="ln">287</span><span class="code">        top_probs = [math.exp(tl - max_tl) <span class="keyword">for</span> tl <span class="keyword">in</span> top_logits]</span></div>
+<div class="line line-new"><span class="ln">288</span><span class="code">        token_id = top_ids[random.choices(<span class="builtin">range</span>(top_k), weights=top_probs)[<span class="number">0</span>]]</span></div>
+<div class="line"><span class="ln">289</span><span class="code">        <span class="keyword">if</span> token_id == BOS:</span></div>
+<div class="line"><span class="ln">290</span><span class="code">            <span class="keyword">break</span></span></div>
+<div class="line"><span class="ln">291</span><span class="code">        <span class="builtin">print</span>(itos[token_id], end=<span class="string">""</span>)</span></div>
+<div class="line"><span class="ln">292</span><span class="code">    <span class="builtin">print</span>()</span></div>
+<div class="line"><span class="ln">293</span><span class="code"></span></div>
 </pre></div>
-</div><!-- /columns -->
+</div>
 
 <footer>
-  Original: <a href="https://karpathy.ai/microgpt.html">karpathy.ai/microgpt</a> &middot;
-  <a href="https://gist.github.com/karpathy/8627fe009c40f57531cb18360106ce95">GitHub Gist</a> &middot;
-  265 lines (original 243) &middot; +22 lines of optimization, 0 dependencies
+  293 lines &bull; 0 dependencies &bull; Original by <a href="https://github.com/karpathy">@karpathy</a> &mdash; <a href="https://karpathy.ai/microgpt.html">microgpt</a> | <a href="https://gist.github.com/karpathy/8627fe009c40f57531cb18360106ce95">Gist</a>
 </footer>
 
 </body>
