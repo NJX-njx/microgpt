@@ -1,61 +1,102 @@
-# microgpt (optimized)
+# microgpt (optimized + CUDA)
 
 ![microgpt logo](assets/microgpt.png)
 
-Optimized version of [Karpathy's microgpt](https://karpathy.ai/microgpt.html), the most atomic way to train and inference a GPT in pure, dependency-free Python.
+A minimal GPT project with two aligned implementations:
 
-**293 lines, 0 dependencies.** All optimizations preserve the original simplicity.
+- `microgpt.py`: pure Python, dependency-free reference implementation.
+- `microgpt_cuda.cu`: CUDA/C++ implementation for Windows (MSVC + CUDA), optimized for speed while keeping the same model/training logic.
 
-## What's Changed
+## What this repo focuses on
 
-| Optimization | Lines | Impact |
-|---|---|---|
-| Direct `__truediv__` implementation | +8 | ~20-30% fewer computation graph nodes per step |
-| Fused `cross_entropy` (log-softmax + NLL) | +5 | Fewer nodes + better numerical stability |
-| Iterative `backward()` topological sort | 0 | Eliminates recursion depth limit |
-| `sum(losses[1:], losses[0])` | 0 | Removes phantom `Value(0)` node |
-| Adam running product | +2 | Numerically stable bias correction at large step counts |
-| `with open()` file handle | +1 | Proper resource cleanup |
-| **Weight tying** (wte = lm_head) | -1 | Standard GPT-2 practice, fewer params |
-| **Cosine LR schedule** | 0 | Smoother decay than linear |
-| **Train/val split** (90/10) | +3 | Basic ML hygiene, detect overfitting |
-| **Periodic validation** (every 100 steps) | +10 | Pure-float NLL eval on held-out docs |
-| **Gradient clipping** (global norm) | +4 | Prevents exploding gradients, stabilizes training |
-| **AdamW weight decay** | +1 | Decoupled regularization |
-| **Top-k sampling** (k=5) | +4 | Higher quality inference, avoids garbage tokens |
-| **Per-step timing** | +3 | Performance observability in ms/step |
+- Keep the project small and readable.
+- Preserve algorithmic parity between Python and CUDA paths.
+- Push performance through GPU residency and kernel fusion where it matters.
 
-**Total: +50 lines** (243 -> 293), no new dependencies.
+Core model/training recipe (both paths):
 
-## Files
+- Character tokenizer with `<BOS>`.
+- GPT-style block with RMSNorm, causal multi-head attention, and ReLU^2 MLP.
+- Weight tying (`wte` reused as LM head).
+- AdamW + cosine LR + global grad clipping.
+- Train/val split, periodic validation, top-k sampling inference.
 
-- **`microgpt.py`** - Complete optimized Python algorithm (runnable)
-- **`microgpt_cuda.cu`** - CUDA/C++ port with full train/val/inference loop
-- **`microgpt_optimized.html`** - Syntax-highlighted 3-column view with change annotations
-- **`CMakeLists.txt`** - CMake entrypoint for CUDA build
+## Repository layout
 
-## Quick Start
+- `microgpt.py`: full Python algorithm (train + val + inference).
+- `microgpt_cuda.cu`: full CUDA/C++ algorithm (train + val + inference).
+- `microgpt_optimized.html`: side-by-side Python/CUDA code converter view.
+- `CMakeLists.txt`: CUDA build entry.
+- `input.txt`: corpus (auto-downloaded if missing on first run).
+
+## Quick start (Python)
 
 ```bash
 python microgpt.py
 ```
 
-It auto-downloads `input.txt` on first run, trains for 500 steps with periodic validation, then generates samples via top-k sampling.
+If `input.txt` is missing, the script downloads the default names dataset automatically.
 
-## CUDA Build
+## Quick start (CUDA / Windows)
+
+Prerequisites:
+
+- NVIDIA GPU + compatible driver
+- CUDA Toolkit (your setup: CUDA 13.1)
+- Visual Studio 2022 (MSVC, x64 toolchain)
+- CMake 3.24+
+
+Build:
 
 ```bash
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_CUDA_ARCHITECTURES=86
 cmake --build build --config Release
+```
+
+Run:
+
+```bash
+.\build\Release\microgpt_cuda.exe --help
 .\build\Release\microgpt_cuda.exe
 ```
 
-For quick smoke tests:
+Smoke test:
 
 ```bash
 .\build\Release\microgpt_cuda.exe --steps 5 --samples 3
 ```
 
+## CUDA CLI options
+
+- `--steps <int>`: training steps (default `500`)
+- `--val-every <int>`: validation interval (default `100`)
+- `--val-docs <int>`: max validation docs per eval (default `20`)
+- `--samples <int>`: generated samples after training (default `20`)
+- `--top-k <int>`: top-k for sampling (default `5`)
+- `--temperature <float>`: sampling temperature (default `0.6`)
+- `--seed <int>`: RNG seed (default `42`)
+
+## Important implementation notes
+
+- CUDA path keeps parameters, gradients, and optimizer states on GPU.
+- Training step is fused into one kernel launch (forward + backward + grad clip + AdamW update).
+- Current fused implementation is specialized to `n_layer = 1` (same as current Python config).
+- `kMaxVocab = 256` in `microgpt_cuda.cu`; if your dataset exceeds this, increase it and rebuild.
+- Default `CMAKE_CUDA_ARCHITECTURES` is `86`; set it to your GPU architecture when needed.
+
+## Code converter page
+
+Open `microgpt_optimized.html` in a browser to switch between:
+
+- Python view
+- CUDA view
+- Bilingual side-by-side comparison
+
+This is useful for checking one-to-one conceptual mapping between the two codebases.
+
 ## Credits
 
-Original by [@karpathy](https://github.com/karpathy) - [microgpt](https://karpathy.ai/microgpt.html) | [Gist](https://gist.github.com/karpathy/8627fe009c40f57531cb18360106ce95)
+Original microgpt idea and baseline by [@karpathy](https://github.com/karpathy):
+
+- https://karpathy.ai/microgpt.html
+- https://gist.github.com/karpathy/8627fe009c40f57531cb18360106ce95
