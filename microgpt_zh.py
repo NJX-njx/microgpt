@@ -11,8 +11,10 @@ import math     # math.log, math.exp
 import random   # random.seed, random.choices, random.gauss, random.shuffle
 import time     # time.time
 
+
 # 在混沌中建立秩序
 random.seed(42)
+
 
 # 准备输入数据集 `docs`：字符串列表（例如：名字数据集）
 if not os.path.exists('input.txt'):
@@ -21,18 +23,20 @@ if not os.path.exists('input.txt'):
     urllib.request.urlretrieve(names_url, 'input.txt')
 with open('input.txt') as f: # 正确关闭文件句柄
     docs = [l.strip() for l in f.read().strip().split('\n') if l.strip()]
-random.shuffle(docs)
+random.shuffle(docs) # docs 是一个字符串列表，每个字符串都是一个名字（例如：'emma'）。我们将使用这些名字来训练一个 GPT 模型，学习如何生成类似的名字。
 split = int(0.9 * len(docs))
 train_docs, val_docs = docs[:split], docs[split:]
 print(f"num docs: {len(docs)} (train: {len(train_docs)}, val: {len(val_docs)})")
 
-# 定义分词器（Tokenizer），用于将字符串翻译为离散符号，反之亦然
-chars = ['<BOS>'] + sorted(set(''.join(docs))) # 带有 BOS 分隔符的字符级分词器
+
+# 定义分词器（Tokenizer），用于将字符串翻译为离散符号，反之亦然，设计分词器时的数据是全部的数据集（train + val），以确保训练和验证使用相同的词汇表。
+chars = ['<BOS>'] + sorted(set(''.join(docs))) # join(docs) 将所有名字连接成一个长字符串，set(...) 提取唯一字符(去掉重复的字符)，sorted(...) 对字符进行排序，最后在前面添加特殊 token <BOS> 代表序列开始。
 vocab_size = len(chars)
-stoi = { ch:i for i, ch in enumerate(chars) } # 编码：映射字符串到整数
+stoi = { ch:i for i, ch in enumerate(chars) } # 编码：映射字符串到整数 enumerate(chars) 生成一个 (index, character) 的迭代器，stoi 是一个字典，将每个字符映射到一个唯一的整数索引。这个索引将用于模型的输入和输出。
 itos = { i:ch for i, ch in enumerate(chars) } # 解码：映射整数到字符串
-BOS = stoi['<BOS>']
+BOS = stoi['<BOS>'] # 定义一个特殊的 token <BOS>（Begin Of Sequence），它的索引是 0。这个 token 将用于标记序列的开始，帮助模型学习如何生成名字。 我能理解<BOS>,但是为什么又增加BOS这个变量呢？因为在后续的代码中，我们需要频繁地使用这个特殊 token 的索引来标记序列的开始，所以将其存储在一个变量 BOS 中可以提高代码的可读性和维护性。这样，当我们需要使用这个特殊 token 时，只需引用 BOS 变量，而不必每次都写出 stoi['<BOS>']，使得代码更简洁明了。
 print(f"vocab size: {vocab_size}")
+
 
 # 定义自动求导（Autograd），通过计算图递归应用链式法则
 # 从而计算损失函数相对于模型参数的梯度。
@@ -40,11 +44,11 @@ class Value:
     """存储单个标量值及其梯度。"""
 
     def __init__(self, data, _children=(), _op=''):
-        self.data = data
+        self.data = data 
         self.grad = 0
-        self._backward = lambda: None
-        self._prev = set(_children)
-        self._op = _op # 产生此节点的算子，用于绘图/调试等
+        self._backward = lambda: None # lambda: None 是一个空函数，作为默认的反向传播函数。当我们创建一个新的 Value 对象时，如果没有提供特定的反向传播逻辑，它将使用这个空函数，确保在调用 backward() 方法时不会出错。
+        self._prev = set(_children) # _children 是一个可迭代对象，包含了这个 Value 对象的直接前驱节点（即参与计算这个 Value 的其他 Value 对象）。我们将这些前驱节点存储在一个集合 _prev 中，以便在反向传播时能够访问它们。
+        self._op = _op # 产生此节点的算子，用于绘图/调试等 目的。这个属性 _op 用于记录产生这个 Value 对象的操作类型（例如：加法、乘法等）。它主要用于调试和可视化计算图，帮助我们理解每个 Value 对象是如何通过不同的操作组合而成的。
 
     def __add__(self, other):
         other = other if isinstance(other, Value) else Value(other)
