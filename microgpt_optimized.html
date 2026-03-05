@@ -9,155 +9,193 @@
   :root {
     --bg: #0d1117;
     --panel: #161b22;
-    --line: #21262d;
-    --text: #c9d1d9;
+    --line: #30363d;
+    --text: #e6edf3;
     --muted: #8b949e;
     --accent: #58a6ff;
     --active: #1f6feb;
     --ln: #6e7681;
+    --header-bg: #161b22;
+    --border-radius: 12px;
   }
   body {
     background: var(--bg);
     color: var(--text);
-    font-family: "SF Mono", "Fira Code", "Consolas", "Courier New", monospace;
-    font-size: 13px;
-    line-height: 1.5;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+    font-size: 14px;
+    line-height: 1.6;
     min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
   }
   .wrap {
-    max-width: 1600px;
+    max-width: 1400px;
     margin: 0 auto;
-    padding: 14px;
+    padding: 40px 20px;
+  }
+  header {
+    text-align: center;
+    margin-bottom: 40px;
   }
   h1 {
-    font-size: 24px;
-    color: var(--accent);
-    text-align: center;
-    margin-bottom: 6px;
+    font-size: 32px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 12px;
+    letter-spacing: -0.5px;
   }
   .subtitle {
-    text-align: center;
     color: var(--muted);
-    font-size: 12px;
-    margin-bottom: 12px;
+    font-size: 16px;
+    max-width: 600px;
+    margin: 0 auto 24px;
   }
   .toolbar {
     display: flex;
     justify-content: center;
-    gap: 8px;
-    margin-bottom: 12px;
-    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 32px;
   }
   .btn {
-    border: 1px solid #30363d;
-    background: #161b22;
+    border: 1px solid var(--line);
+    background: var(--panel);
     color: var(--text);
-    padding: 6px 10px;
-    font-size: 12px;
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: 500;
     border-radius: 6px;
     cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.3, 0, 0.5, 1);
   }
-  .btn:hover { border-color: var(--accent); }
+  .btn:hover {
+    background: #30363d;
+    border-color: #8b949e;
+  }
   .btn.active {
     background: var(--active);
-    border-color: var(--active);
+    border-color: rgba(255, 255, 255, 0.1);
     color: #fff;
-  }
-  .hint {
-    text-align: center;
-    color: var(--muted);
-    font-size: 11px;
-    margin-bottom: 10px;
   }
   .grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 10px;
+    gap: 20px;
   }
   .panel {
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: var(--border-radius);
     overflow: hidden;
-    background: var(--panel);
-    min-height: 70vh;
+    background: #010409;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.2);
     display: flex;
     flex-direction: column;
+    height: 800px;
   }
-  .panel.hidden { display: none; }
   .panel-header {
-    background: #0f141b;
+    background: var(--header-bg);
     border-bottom: 1px solid var(--line);
-    padding: 8px 10px;
+    padding: 12px 16px;
     display: flex;
     justify-content: space-between;
     align-items: center;
   }
   .panel-title {
-    color: var(--accent);
-    font-size: 12px;
+    color: var(--text);
+    font-size: 14px;
     font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .panel-title::before {
+    content: "";
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
   }
   .panel-meta {
     color: var(--muted);
-    font-size: 11px;
+    font-size: 12px;
+    font-family: inherit;
   }
   .code-scroll {
     overflow: auto;
-    height: 100%;
+    flex: 1;
+    background: #0d1117;
   }
   .line {
     display: flex;
-    border-bottom: 1px solid rgba(33,38,45,0.35);
+    font-family: "ui-monospace", "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 12px;
   }
   .ln {
-    width: 56px;
-    min-width: 56px;
+    width: 48px;
+    min-width: 48px;
     text-align: right;
     color: var(--ln);
-    padding: 0 10px 0 0;
+    padding: 0 12px;
     user-select: none;
+    background: #0d1117;
     border-right: 1px solid var(--line);
-    background: #0f141b;
+    opacity: 0.6;
   }
   .code {
     white-space: pre;
-    padding: 0 10px;
-    width: 100%;
-    color: var(--text);
+    padding: 0 16px;
+    color: #e6edf3;
   }
+  /* Scrollbar Styling */
+  .code-scroll::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .code-scroll::-webkit-scrollbar-track {
+    background: #0d1117;
+  }
+  .code-scroll::-webkit-scrollbar-thumb {
+    background: #30363d;
+    border-radius: 10px;
+    border: 2px solid #0d1117;
+  }
+  .code-scroll::-webkit-scrollbar-thumb:hover {
+    background: #484f58;
+  }
+  
   .view-python .panel-cuda { display: none; }
   .view-cuda .panel-python { display: none; }
-  .view-python .grid,
-  .view-cuda .grid { grid-template-columns: 1fr; }
-  @media (max-width: 1100px) {
+  .view-python .grid, .view-cuda .grid { grid-template-columns: 1fr; }
+
+  @media (max-width: 1000px) {
     .grid { grid-template-columns: 1fr; }
+    .panel { height: 600px; }
   }
 </style>
 </head>
 <body class="view-bilingual">
 <div class="wrap">
-  <h1>microgpt Code Converter</h1>
-  <div class="subtitle">Python and CUDA versions as bilingual documents: switch or compare side by side.</div>
-
-  <div class="toolbar">
-    <button class="btn" data-view="python">Python View</button>
-    <button class="btn" data-view="cuda">CUDA View</button>
-    <button class="btn active" data-view="bilingual">Bilingual View</button>
-  </div>
-  <div class="hint">This page behaves like a language-version converter: same project, two implementation languages.</div>
+  <header>
+    <h1>MicroGPT Dashboard</h1>
+    <div class="subtitle">A minimalist GPT-2 implementation in pure Python vs CUDA/C++. Cross-platform bilingual code documentation.</div>
+    <div class="toolbar">
+      <button class="btn" data-view="python">Python Implementation</button>
+      <button class="btn" data-view="cuda">CUDA Kernel</button>
+      <button class="btn active" data-view="bilingual">Side-by-Side Compare</button>
+    </div>
+  </header>
 
   <div class="grid">
-    <section class="panel panel-python" id="panel-python">
+    <section class="panel panel-python">
       <div class="panel-header">
-        <div class="panel-title">Python (microgpt.py)</div>
+        <div class="panel-title">microgpt.py</div>
         <div class="panel-meta" id="meta-python"></div>
       </div>
       <div class="code-scroll" id="scroll-python"></div>
     </section>
 
-    <section class="panel panel-cuda" id="panel-cuda">
+    <section class="panel panel-cuda">
       <div class="panel-header">
-        <div class="panel-title">CUDA/C++ (microgpt_cuda.cu)</div>
+        <div class="panel-title">microgpt_cuda.cu</div>
         <div class="panel-meta" id="meta-cuda"></div>
       </div>
       <div class="code-scroll" id="scroll-cuda"></div>
